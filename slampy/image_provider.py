@@ -645,8 +645,11 @@ class ImageProvider:
 		if self.telemetry:
 			self.loadTelemetry(self.telemetry)
 					
-		print("Fiding panels...")
+		print("Finding panels...")
+
+		panel_time = time.time()
 		self.findPanels()
+		print(f"findPanels time in ms: {(time.time() - panel_time) * 1000}")
 
 		print("Print metadata...")
 		self.printMetadata(self.images[0])

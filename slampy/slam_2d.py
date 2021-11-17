@@ -586,6 +586,9 @@ class Slam2D(Slam):
 
 	# convertAndExtract
 	def convertAndExtract(self,args):
+
+		extraction_start = time.time()
+
 		I, (img, camera) = args
 		
 		if not self.extractor:
@@ -596,6 +599,8 @@ class Slam2D(Slam):
 
 		self.advanceAction(I)
 
+		print(f"extraction time in ms: {(time.time() - extraction_start) * 1000}")
+		
 		# create idx and extract keypoints
 		keypoint_filename = self.cache_dir+"/keypoints/%04d" % (camera.id,)
 		idx_filename      = self.cache_dir+"/" + camera.idx_filename
@@ -604,9 +609,13 @@ class Slam2D(Slam):
 			print("Keypoints already stored and idx generated",img.filenames[0])
 			
 		else:
+
+			generate_start = time.time()
 			
 			full = self.generateImage(img)
 			Assert(isinstance(full, numpy.ndarray))
+
+			print(f"generate time in ms: {(time.time() - generate_start) * 1000}")
 
 			# Match Histograms
 			if self.enable_color_matching:
@@ -632,6 +641,8 @@ class Slam2D(Slam):
 
 			print(f"dataset write time in ms: {(dataset_end - dataset_start) * 1000}")
 
+			convert_start = time.time()
+
 			energy=ConvertImageToGrayScale(full)
 			energy=ResizeImage(energy, self.energy_size)
 			(keypoints,descriptors)=self.extractor.doExtract(energy)
@@ -651,6 +662,8 @@ class Slam2D(Slam):
 				cv2.drawMarker(energy, (int(keypoint.pt[0]), int(keypoint.pt[1])), (0, 255, 255), cv2.MARKER_CROSS, 5)
 			energy=cv2.flip(energy, 0)
 			energy=ConvertImageToUint8(energy)
+
+			print(f"convert time in ms: {(time.time() - convert_start) * 1000}")
 
 			if False:
 				quad_box=camera.quad.getBoundingBox()
@@ -676,7 +689,7 @@ class Slam2D(Slam):
 		for I,(img,camera) in enumerate(zip(self.images,self.cameras)):
 			self.convertAndExtract([I,(img,camera)])
 		
-		print("done in",t1.elapsedMsec(),"msec")
+		print("Conversion and feature extraction done in",t1.elapsedMsec(),"msec")
 
 	# findMatches
 	def findMatches(self,camera1,camera2):
