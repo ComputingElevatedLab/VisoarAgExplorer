@@ -63,6 +63,7 @@ class ImageProvider:
 		self.telemetry=None
 		self.plane=None
 		self.calibration=None
+		self.skip_every_other = False
 
 		# the offset for all yaws in respect to the north pole
 		# in radians
