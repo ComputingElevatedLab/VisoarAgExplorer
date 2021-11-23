@@ -63,7 +63,8 @@ class ImageProvider:
 		self.telemetry=None
 		self.plane=None
 		self.calibration=None
-		self.skip_every_other = False
+		# number of images to skip, used as modulo. 1=skip none, 2=skip every other, etc;
+		self.skip_number=1
 
 		# the offset for all yaws in respect to the north pole
 		# in radians

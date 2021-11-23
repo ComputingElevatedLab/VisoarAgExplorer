@@ -34,8 +34,7 @@ class ImageProviderRedEdge(ImageProvider):
 		if len(v)<2 or not v[-2].isdigit(): 
 			return ""
 
-		# TODO: figure out option to run this
-		if int(v[1]) % 2 and self.skip_every_other: 
+		if not (int(v[1]) % self.skip_value == 0): 
 			return ""
 
 		# todo _6.tif  LWIR _6 which has a different resolution 
