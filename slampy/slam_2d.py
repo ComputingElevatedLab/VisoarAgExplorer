@@ -163,6 +163,7 @@ class Slam2D(Slam):
 
 		self.images             = []
 		self.extractor          = None
+		self.extractor_method   = None
 
 		# you can override using a physic_box from another sequence
 		self.physic_box         = None 
@@ -592,7 +593,7 @@ class Slam2D(Slam):
 		I, (img, camera) = args
 		
 		if not self.extractor:
-			self.extractor=ExtractKeyPoints(self.min_num_keypoints,self.max_num_keypoints,self.anms)
+			self.extractor=ExtractKeyPoints(self.min_num_keypoints,self.max_num_keypoints,self.anms,self.extractor_method)
 
 		if self.enable_color_matching:
 			color_matching_ref = None		
