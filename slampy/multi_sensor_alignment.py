@@ -17,7 +17,7 @@ from slampy.image_utils       import *
 class MultiSensorAlignment:
 
 	# constructor
-	def __init__(self, multi, altitude, calibration, cache_dir):
+	def __init__(self, multi, altitude, calibration, cache_dir, extractor_method=None):
 		self.min_keypoints = 3000
 		self.max_keypoints = 6000
 		self.anms = 0
@@ -28,6 +28,7 @@ class MultiSensorAlignment:
 		self.cropped_dimensions = None
 		self.calibration = calibration
 		self.altitude = altitude
+		self.extractor_method = extractor_method
 		cached_filename=cache_dir+"/multi_alignment.info"
 
 		if not self.openCache(cached_filename):
@@ -58,7 +59,7 @@ class MultiSensorAlignment:
 		slam.dtype=DType.fromString("uint8") # note the images have been converted to uint8
 		slam.calibration=self.calibration
 
-		extractor=ExtractKeyPoints(self.min_keypoints,self.max_keypoints,self.anms)
+		extractor=ExtractKeyPoints(self.min_keypoints,self.max_keypoints,self.anms,self.extractor_method)
 
 		nsensors=len(multi)
 		for I in range(nsensors):

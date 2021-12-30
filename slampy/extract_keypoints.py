@@ -1,13 +1,14 @@
 import cv2
+import numpy as np
 
-from OpenVisus  import *
+from OpenVisus          import *
+from slampy.image_utils import *
 
 # //////////////////////////////////////////////////////////////////////////
 class ExtractKeyPoints:
 
 	# constructor
 	def __init__(self,min_num_keypoints,max_num_keypoints,anms,extractor_method="akaze"):
-
 
 		self.extractor_method=extractor_method
 		
@@ -18,7 +19,9 @@ class ExtractKeyPoints:
 			self.detector = cv2.KAZE.create()
 			self.kaze_threshold=self.detector.getThreshold()
 		elif (extractor_method == "sift"):
-			self.detector = cv2.SIFT.create()
+			# if we don't set a maximum number of features to find, 
+			# it'll occasionally find an incomprehensibly large amount
+			self.detector = cv2.SIFT.create(nfeatures=max_num_keypoints)
 		elif (extractor_method == "orb"):
 			self.detector = cv2.ORB.create()
 			self.fastThreshold = self.detector.getFastThreshold()
@@ -160,7 +163,12 @@ class ExtractKeyPoints:
 
 		# compute descriptors
 		t2 = Time.now()
+
 		keypoints,descriptors=self.detector.compute(energy, keypoints)
+
+		# convert descriptors to uint8
+		descriptors = (descriptors * 255).astype('uint8')
+
 		msec_compute = t2.elapsedMsec()
 
 		print("Extracted",len(keypoints), " keypoints"," in " , T1.elapsedMsec() ," msec", "msec_detect", msec_detect, "msec_compute" , msec_compute, "msec_anms",msec_anms)
@@ -174,7 +182,7 @@ class ExtractKeyPoints:
 		t2 = Time.now()
 
 		# normalize input array to uint8 (orb cannot handle float32)
-		energy_n = cv2.normalize(src=energy, dst=None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
+		energy_n = ConvertImageToUint8(energy)
 
 		keypoints=[]
 		history=[]
@@ -245,8 +253,8 @@ class ExtractKeyPoints:
 		t2 = Time.now()
 
 		# normalize input array to uint8 (sift cannot handle float32)
-		energy_n = cv2.normalize(src=energy, dst=None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
-
+		energy_n = ConvertImageToUint8(energy)
+    
 		keypoints = self.detector.detect(energy_n)
 		
 		print("sift got " , len(keypoints) , " keypoints")
@@ -273,7 +281,11 @@ class ExtractKeyPoints:
 
 		# compute descriptors
 		t2 = Time.now()
+
 		keypoints,descriptors=self.detector.compute(energy_n, keypoints)
+
+		descriptors = np.array(descriptors, dtype=numpy.uint8)
+
 		msec_compute = t2.elapsedMsec()
 
 		print("Extracted",len(keypoints), " keypoints"," in " , T1.elapsedMsec() ," msec", "msec_detect", msec_detect, "msec_compute" , msec_compute, "msec_anms",msec_anms)

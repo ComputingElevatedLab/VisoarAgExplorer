@@ -198,6 +198,7 @@ class Slam2D(Slam):
 		self.provider.plane=plane
 		self.provider.image_dir=self.image_dir
 		self.provider.cache_dir=self.cache_dir
+		self.provider.extractor_method=self.extractor_method
 		self.provider.calibration=calibration
 		self.provider.setImages(images)
 		

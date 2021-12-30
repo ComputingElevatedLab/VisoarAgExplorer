@@ -65,6 +65,7 @@ class ImageProvider:
 		self.calibration=None
 		# number of images to skip, used as modulo. 1=skip none, 2=skip every other, etc;
 		self.skip_number=1
+		self.extractor_method=None
 
 		# the offset for all yaws in respect to the north pole
 		# in radians
@@ -614,9 +615,7 @@ class ImageProvider:
 	# findMultiAlignment
 	def findMultiAlignment(self,multi):
 		if len(multi)==1: return
-		print("Finding multi sensor alignment...")
-		self.multi_sensor_alignment=MultiSensorAlignment(multi, self.images[0].alt, self.calibration, self.cache_dir) 
-		print("Found multi sensor alignment")
+		self.multi_sensor_alignment=MultiSensorAlignment(multi, self.images[0].alt, self.calibration, self.cache_dir, self.extractor_method) 
 
 	# addImage
 	def addImage(self, filenames):
