@@ -164,6 +164,8 @@ class Slam2D(Slam):
 		self.images             = []
 		self.extractor          = None
 		self.extractor_method   = None
+		# which band to use for extraction with micasense imagery
+		self.micasense_band     = 0
 
 		# you can override using a physic_box from another sequence
 		self.physic_box         = None 
@@ -645,7 +647,15 @@ class Slam2D(Slam):
 
 			convert_start = time.time()
 
-			energy=ConvertImageToGrayScale(full)
+
+			energy = None
+
+			# if we're using micasense imagery, select the band specified by the user for extraction
+			if (isinstance(self.provider, ImageProviderRedEdge)):
+				print(f"Using band index {self.micasense_band} for extraction")
+				energy = full[:,:,self.micasense_band]
+			else:
+				energy=ConvertImageToGrayScale(full)
 			energy=ResizeImage(energy, self.energy_size)
 			(keypoints,descriptors)=self.extractor.doExtract(energy)
 
