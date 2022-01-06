@@ -1,5 +1,3 @@
-
-
 import sys,os,platform,math
 
 # this is needed to find micasense module
@@ -34,6 +32,9 @@ class ImageProviderRedEdge(ImageProvider):
 		v=os.path.splitext(filename)[0].split("_")
 		
 		if len(v)<2 or not v[-2].isdigit(): 
+			return ""
+
+		if not (int(v[1]) % self.skip_value == 0): 
 			return ""
 
 		# todo _6.tif  LWIR _6 which has a different resolution 

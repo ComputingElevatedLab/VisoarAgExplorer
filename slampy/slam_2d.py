@@ -163,6 +163,9 @@ class Slam2D(Slam):
 
 		self.images             = []
 		self.extractor          = None
+		self.extractor_method   = None
+		# which band to use for extraction with micasense imagery
+		self.micasense_band     = 0
 
 		# you can override using a physic_box from another sequence
 		self.physic_box         = None 
@@ -197,6 +200,7 @@ class Slam2D(Slam):
 		self.provider.plane=plane
 		self.provider.image_dir=self.image_dir
 		self.provider.cache_dir=self.cache_dir
+		self.provider.extractor_method=self.extractor_method
 		self.provider.calibration=calibration
 		self.provider.setImages(images)
 		
@@ -586,16 +590,21 @@ class Slam2D(Slam):
 
 	# convertAndExtract
 	def convertAndExtract(self,args):
+
+		extraction_start = time.time()
+
 		I, (img, camera) = args
 		
 		if not self.extractor:
-			self.extractor=ExtractKeyPoints(self.min_num_keypoints,self.max_num_keypoints,self.anms)
+			self.extractor=ExtractKeyPoints(self.min_num_keypoints,self.max_num_keypoints,self.anms,self.extractor_method)
 
 		if self.enable_color_matching:
 			color_matching_ref = None		
 
 		self.advanceAction(I)
 
+		print(f"extraction time in ms: {(time.time() - extraction_start) * 1000}")
+		
 		# create idx and extract keypoints
 		keypoint_filename = self.cache_dir+"/keypoints/%04d" % (camera.id,)
 		idx_filename      = self.cache_dir+"/" + camera.idx_filename
@@ -604,9 +613,13 @@ class Slam2D(Slam):
 			print("Keypoints already stored and idx generated",img.filenames[0])
 			
 		else:
+
+			generate_start = time.time()
 			
 			full = self.generateImage(img)
 			Assert(isinstance(full, numpy.ndarray))
+
+			print(f"generate time in ms: {(time.time() - generate_start) * 1000}")
 
 			# Match Histograms
 			if self.enable_color_matching:
@@ -632,7 +645,17 @@ class Slam2D(Slam):
 
 			print(f"dataset write time in ms: {(dataset_end - dataset_start) * 1000}")
 
-			energy=ConvertImageToGrayScale(full)
+			convert_start = time.time()
+
+
+			energy = None
+
+			# if we're using micasense imagery, select the band specified by the user for extraction
+			if (isinstance(self.provider, ImageProviderRedEdge)):
+				print(f"Using band index {self.micasense_band} for extraction")
+				energy = full[:,:,self.micasense_band]
+			else:
+				energy=ConvertImageToGrayScale(full)
 			energy=ResizeImage(energy, self.energy_size)
 			(keypoints,descriptors)=self.extractor.doExtract(energy)
 
@@ -651,6 +674,8 @@ class Slam2D(Slam):
 				cv2.drawMarker(energy, (int(keypoint.pt[0]), int(keypoint.pt[1])), (0, 255, 255), cv2.MARKER_CROSS, 5)
 			energy=cv2.flip(energy, 0)
 			energy=ConvertImageToUint8(energy)
+
+			print(f"convert time in ms: {(time.time() - convert_start) * 1000}")
 
 			if False:
 				quad_box=camera.quad.getBoundingBox()
@@ -676,7 +701,7 @@ class Slam2D(Slam):
 		for I,(img,camera) in enumerate(zip(self.images,self.cameras)):
 			self.convertAndExtract([I,(img,camera)])
 		
-		print("done in",t1.elapsedMsec(),"msec")
+		print("Conversion and feature extraction done in",t1.elapsedMsec(),"msec")
 
 	# findMatches
 	def findMatches(self,camera1,camera2):
