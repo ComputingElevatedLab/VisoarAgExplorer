@@ -11,14 +11,15 @@ from functools import partial
 from PyQt5.QtWidgets                  import QScrollArea, QToolButton
 from PyQt5.QtWebEngineWidgets         import QWebEngineView
 from OpenVisus                        import *
+from OpenVisus.VisusKernelPy                        import *
 from OpenVisus.gui                    import *
 from datetime import datetime
 
 DEBUG = False
 ENABLE_SAVE_IDX = False
 
-MASTER_SCRIPT_LIST = ["Original","NDVI_MAPIR", "NDVI_MAPIR_normalized","TGI","TGI_normalized", "NDVI_Agrocam","NDVI", "TGI_Threshold", "NDVI_Threshold",  "Threshold"]
-EXPERIMENTAL_SCRIPT_LIST = ["Original","NDVI_MAPIR","NDVI_MAPIR_normalized","NDVI_Agrocam","channel_1", "channel_2", "channel_3","NDVI_Sentera", "NDRE_Sentera",  "Contour", "Count", "NDVI",
+MASTER_SCRIPT_LIST = ["Original","NDVI_MAPIR", "NDVI_MAPIR_normalized",  "TGI","TGI_normalized", "NDVI_Agrocam","NDVI", "TGI_Threshold", "NDVI_Threshold",  "Threshold"]
+EXPERIMENTAL_SCRIPT_LIST = ["Original","NDVI_MAPIR","NDVI_MAPIR_normalized","NDVI_MAPIR_normalized_Nzones","NDVI_Agrocam","channel_1", "channel_2", "channel_3","NDVI_Sentera", "NDRE_Sentera",  "Contour", "Count", "NDVI",
                             "NDVI_Threshold", "Row", "Segment", "TGI","TGI_normalized", "TGI_alone",
                             "TGI_matplotlib", "TGI_nomatplotlib", "TGI_Threshold", "Threshold"]
 
@@ -30,8 +31,11 @@ import xml.etree.ElementTree as ET
 import xml.dom.minidom
 
 
+
+
 def checkForUpdates(parent, log=None):
-    log.print("Checking for updates")
+    if log:
+        log.print("Checking for updates")
     import git
     ThisDir = os.path.dirname(os.path.realpath(__file__))
     g = git.Git( ThisDir )
@@ -501,6 +505,7 @@ def pretty_print_xml_given_root(root, output_xml):
         [s for s in xml_string.splitlines() if s.strip()])  # remove the weird newline issue
     with open(output_xml, "w") as file_out:
         file_out.write(xml_string)
+        file_out.write('\n\n')
 
 def pretty_print_xml_given_file(input_xml, output_xml):
     #from xml.dom import minidom

@@ -41,6 +41,7 @@ class MyViewerWidget(QWidget):
         self.parent = parent
         self.setStyleSheet(LOOK_AND_FEEL)
         self.viewer = MyViewer()
+        self.viewer.setMinimal()
         self.toolbar = QHBoxLayout()
         self.sublayout = QVBoxLayout()
         self.myGradientWidget = ViSOARGradientMapViewWidget(self, self.viewer )
@@ -107,6 +108,28 @@ class MyViewerWidget(QWidget):
         self.sublayout.addWidget(self.viewer_subwin)
         self.setLayout(self.sublayout)
 
+    def getNewImageForImageView(self):
+        imagedataFilename = self.saveScreenshot(withDate=False)
+        if (self.myGradientWidget.SHOW_HISTOGRAM):
+            from PIL import Image
+            image = numpy.array(Image.open(imagedataFilename)) #.astype(numpy.float32)
+            image = numpy.swapaxes(image, 0, 1)
+            self.myGradientWidget.imv.setImage(image)
+
+    def saveScreenshot(self, withDate=True):
+        if withDate:
+            now = datetime.now()
+            date_time = now.strftime("_%Y%m%d_%H%M%S")
+        else:
+            date_time = ''
+        path = os.path.join(self.parent.projectInfo.cache_dir, 'ViSOARIDX')
+        if not os.path.exists(path):
+            os.makedirs(path)
+        fileName = os.path.join(self.parent.projectInfo.cache_dir, 'ViSOARIDX', self.parent.projectInfo.projName + date_time + '.png')
+        self.viewer.takeSnapshot(True, fileName)
+        visoarLog(self.parent.visoarLogFile, 'saveScreenshot finished: ' + fileName)
+        return fileName
+
     def setSensor(self, sensor):
         self.comboBoxATab.setCurrentText(sensor)
     # def hide(self):
@@ -126,7 +149,8 @@ class MyViewerWidget(QWidget):
         if len(self.parent.visoarLayerList) > 0:
             for alayer in self.parent.visoarLayerList:
                 # for all layers not google should do a union of all boxes
-                if alayer.name != 'google' and db.getChild(alayer.name):
+                dbc = db.getChild(alayer.name)
+                if alayer.name != 'google' and dbc:
                     db2 = self.viewer2.getDataset()
                     # try:
                     #     if db:
@@ -140,18 +164,18 @@ class MyViewerWidget(QWidget):
                     self.viewer2.getGLCamera().guessPosition(box)
                     return
 
-        elif db.getChild("visus"):
-            #db2 = self.viewer2.getDataset()
-            # Causes a crash
-            # db.setEnableAnnotations(False)
-            # if (db2):
-            #     db2.setEnableAnnotations(False)
-            box = db.getChild("visus").getDatasetBounds().toAxisAlignedBox()
-            self.viewer.getGLCamera().guessPosition(box)
-            #self.viewer2.getGLCamera().guessPosition(box)
-        else:
-            self.viewer.guessGLCameraPosition()
-            #self.viewer2.guessGLCameraPosition()
+                elif db.getChild("visus"):
+                    #db2 = self.viewer2.getDataset()
+                    # Causes a crash
+                    # db.setEnableAnnotations(False)
+                    # if (db2):
+                    #     db2.setEnableAnnotations(False)
+                    box = db.getChild("visus").getDatasetBounds().toAxisAlignedBox()
+                    self.viewer.getGLCamera().guessPosition(box)
+                    #self.viewer2.getGLCamera().guessPosition(box)
+                else:
+                    self.viewer.guessGLCameraPosition()
+                    #self.viewer2.guessGLCameraPosition()
 
     def openLayersWindow(self):
         v = VisoarLayerView(self.parent, self.parent.visoarLayerList, self.viewer)
@@ -160,6 +184,7 @@ class MyViewerWidget(QWidget):
         v.activateWindow()
 
     def addMyMapWidgetWindow(self, viewer):
+        self.getNewImageForImageView()
         self.myGradientWidget.show()
         self.myGradientWidget.raise_()
         self.myGradientWidget.activateWindow()
@@ -168,6 +193,8 @@ class MyViewerWidget(QWidget):
         fieldname = "output=ArrayUtils.interleave(ArrayUtils.split(voronoi())[0:3])"
         viewer.setFieldName(fieldname)
         viewer.setScriptingCode(script)
+        self.getNewImageForImageView()
+        self.myGradientWidget.update()
 
     def myinit(self):
         self.viewer.setMinimal()
@@ -178,12 +205,12 @@ class MyViewerWidget(QWidget):
         self.viewer_subwin = sip.wrapinstance(FromCppQtWidget(self.viewer.c_ptr()), QtWidgets.QMainWindow)
 
     def addScriptActionCombobox(self, cbox):
-
-        for item in self.parent.scriptNames:
-            cbox.addItem(item)
-        cbox.setToolTip('Available scripts')
-        cbox.setStyleSheet(MY_COMBOX)
-        cbox.currentIndexChanged.connect(partial(self.loadScript, cbox))
+        if (self.parent.scriptNames):
+            for item in self.parent.scriptNames:
+                cbox.addItem(item)
+            cbox.setToolTip('Available scripts')
+            cbox.setStyleSheet(MY_COMBOX)
+            cbox.currentIndexChanged.connect(partial(self.loadScript, cbox))
 
     def loadScript(self, cbox):
         print('FUNCTION  Load Script...')
@@ -208,7 +235,11 @@ class MyViewerWidget(QWidget):
             scriptName = 'NDRE_Sentera'
         else:
             scriptName = cbox.currentText()
-        script = getTextFromScript(os.path.join(self.parent.app_dir, 'scripts', scriptName + '.py'))
+        script = None
+        try:
+            script = getTextFromScript(os.path.join(self.parent.app_dir, 'scripts', scriptName + '.py'))
+        except:
+            print('Failed to get to script')
         print('\tGot script content is: ')
         print(script)
         if script:
@@ -347,7 +378,7 @@ class ViSOARUIWidget(QWidget):
 
         self.inputMode = "R G B"
         self.projectInfo = VisoarProject()
-        self.userFileHistory = os.path.join(os.getcwd(), 'userFileHistory.xml')
+        self.userFileHistory = os.path.join(os.getcwd(), './userFileHistory.xml')
         self.generate_bbox = False
         self.color_matching = False
         self.blending_exp = "output=voronoi()"
@@ -392,7 +423,7 @@ class ViSOARUIWidget(QWidget):
                     '\t\t<createdAt>' + todayFormated + '</createdAt>\n' +
                     '\t\t<updatedAt>' + todayFormated + '</updatedAt>\n' +
                     '\t</project>\n' +
-                    '</data>\n')
+                    '</data>\n\n\n\n')
             f.close()
 
         if self.ADD_VIEWER:
@@ -593,8 +624,19 @@ class ViSOARUIWidget(QWidget):
             self.inputMode = self.tabAskSensor.comboBoxNewTab.currentText()
             visoarLog(self.visoarLogFile, 'AfterAskSensor')
             if self.tabAskSensor.comboBoxNewTab.currentText() == 'Agrocam' or self.tabAskSensor.comboBoxNewTab.currentText() == 'MAPIR and RGB':
+                self.tabAskSource.curDir.setHidden(True)
+                self.tabAskSource.curDir2.setHidden(True)
+                self.tabAskSource.buttonAddImagesSource.setHidden(True)
+                self.tabAskSource.mapirCalibrationWidget.setHidden(False)
+                self.tabAskSource.mapirCalibrationWidget.on_show()
                 self.tabs.setCurrentIndex(self.ASKSOURCERGBNDVI_TAB)
             else:
+                if (self.tabAskSensor.comboBoxNewTab.currentText() == 'MapIR only (OCNIR)'):
+                    self.tabAskSource.curDir.setHidden(True)
+                    self.tabAskSource.curDir2.setHidden(True)
+                    self.tabAskSource.buttonAddImagesSource.setHidden(True)
+                    self.tabAskSource.mapirCalibrationWidget.setHidden(False)
+                    self.tabAskSource.mapirCalibrationWidget.on_show()
                 self.tabs.setCurrentIndex(self.ASKSOURCE_TAB)
             if self.BATCH_MODE:
                 self.tabAskSource.curDir2.setText(self.dir_of_rgb_source)
@@ -791,6 +833,12 @@ class ViSOARUIWidget(QWidget):
     #Part of batch processing
     def startProcessing(self):
 
+        #PreProcessing
+        #If mapIR images, use target to preprocess
+        if (self.tabAskSensor.comboBoxNewTab.currentText() == 'MAPIR and RGB') or (self.tabAskSensor.comboBoxNewTab.currentText() == 'MapIR only (OCNIR)'):
+            outdir = self.tabAskSource.mapirCalibrationWidget.calibrateMapIRImages()
+            self.projectInfo.srcDir = outdir
+
         for aSrcPath in os.listdir(self.dir_of_rgb_source):
             self.projectInfo.srcDir = os.path.join(self.dir_of_rgb_source, aSrcPath)
             if os.path.isdir(self.projectInfo.srcDir):
@@ -843,14 +891,14 @@ class ViSOARUIWidget(QWidget):
         logging.error("Exception occurred", exc_info=True)
         send_email_crash_notification(log_stream.getvalue(), logfile)
 
+
+
     def setAndRunSlam(self, image_dir, cache_dir=None, telemetry=None, plane=None, calibration=None,
                       physic_box=None):
         self.slam = None
         start = time.time()
         self.slam = Slam2D()
         self.slam.enable_svg = False
-        # self.logFile = os.path.join(cache_dir+"/~visusslam.log")
-        # self.slam_widget.redirect_log = RedirectLog(self.logFile)
 
         if (  os.path.exists(cache_dir)) and (os.path.exists(os.path.join(cache_dir, 'idx', '0000.bin'))):
             buttonReply = QMessageBox.question(self, 'Already Exists',
@@ -884,10 +932,11 @@ class ViSOARUIWidget(QWidget):
         self.stitchTime = "{:.2f}".format((end - start)/60.0)
         self.stitchNumImages = len(self.slam.images)
         self.logTab.clear()
-        f2 = open("~visusslam.log", 'r')
-        # appending the contents of the stitching log to the visoar log
-        self.visoarLogFile.write(f2.read())
-        f2.close()
+        if os.path.exists("~visusslam.log"):
+            f2 = open("~visusslam.log", 'r')
+            # appending the contents of the stitching log to the visoar log
+            self.visoarLogFile.write(f2.read())
+            f2.close()
 
         #self.setUpRClone()
         #These run functions above should return values of success.. but they don't
@@ -1198,6 +1247,7 @@ class ViSOARUIWidget(QWidget):
         #if self.DEBUG:
         visoarLog(self.visoarLogFile, 'saveScreenshot finished: '+fileName)
         popUP('Snapshot Saved', 'Saved Snapshot to: \n' + fileName)
+        return fileName
 
     def mailScreenshot(self, withDate=True):
         if withDate:
@@ -1699,11 +1749,11 @@ class ViSOARUIWidget(QWidget):
         self.tabAskSource.buttonAddImagesSource.setStyleSheet(GREEN_PUSH_BUTTON)
         self.tabAskDest.destNewDir.setText('Choose Directory')
         self.tabAskDest.destNewDir.setStyleSheet(GREEN_PUSH_BUTTON)
+        self.tabAskSource.mapirCalibrationWidget.resetUIFill()
+
         # self.tabNewStitching.buttonAddImagesTab.setText('Choose Directory')
         # self.tabNewStitching.buttonAddImagesTab.setStyleSheet(GREEN_PUSH_BUTTON)
-
         self.tabs.setCurrentIndex(self.START_TAB)
-        self.update()
         #clear out strings:
         self.projectInfo.reset()
         self.viewer.clearAll()
@@ -1712,6 +1762,7 @@ class ViSOARUIWidget(QWidget):
         #self.tabs.setCurrentIndex(self.START_TAB)
         # projectDir is where to save the files
         # srcDir is the location of initial images
+        self.update()
 
     def startViSUSSLAM(self):
         if not self.projectInfo.srcDir:

@@ -128,7 +128,7 @@ class VisoarAgExplorerBatchProcessWidget(ViSOARUIWidget):
                     '\t\t<createdAt>'+todayFormated+'</createdAt>\n' +
                     '\t\t<updatedAt>'+todayFormated+'</updatedAt>\n' +
                     '\t</project>\n' +
-                    '</data>\n')
+                    '</data>\n\n\n')
             f.close()
 
         if self.ADD_VIEWER:
@@ -137,7 +137,7 @@ class VisoarAgExplorerBatchProcessWidget(ViSOARUIWidget):
             self.viewer = self.viewerW.viewer  # MyViewer()
             self.viewer2 = self.viewerW2.viewer  # MyViewer()
 
-            # self.viewer.hide()
+            #self.viewer.hide()
             self.viewer.setMinimal()
             self.viewer2.setMinimal()
 

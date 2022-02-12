@@ -14,6 +14,7 @@ from PyQt5.QtWidgets                  import QWidget, QMessageBox, QGroupBox, QS
 
 from PyQt5.QtWidgets                  import QTableWidget,QTableWidgetItem
 
+from MapIR_ImageCalibration import *
 
 import xml.etree.ElementTree as ET
 import xml.dom.minidom
@@ -25,7 +26,7 @@ def addLogo(app_dir):
     logo.setStyleSheet(NOBACKGROUND_PUSH_BUTTON)
     ##-- self.logo.setStyleSheet("QPushButton {border-style: outset; border-width: 0px;color:#ffffff}");
     logo.setIcon(QIcon(os.path.join(app_dir, 'icons', 'visoar_logo.png')))
-    logo.setIconSize(QSize(480, 214))
+    logo.setIconSize(QSize(240, 107))
     return logo
 
 class VisoarSlamSettingsDefault(QDialog):
@@ -198,9 +199,9 @@ class VisoarAskSource(QWidget):
         self.sublayout.addStretch(True)
 
         self.buttonAddImagesSource = QPushButton('Add Images', self)
+        self.buttonAddImagesSource.setStyleSheet(GREEN_PUSH_SM_BUTTON)
         self.buttonAddImagesSource.resize(180, 40)
         self.buttonAddImagesSource.clicked.connect(self.parent.addImages)
-        self.buttonAddImagesSource.setStyleSheet(GREEN_PUSH_BUTTON)
         self.buttonAddImagesSource.setToolTip('Specify directory of image for stitching')
 
 
@@ -208,9 +209,9 @@ class VisoarAskSource(QWidget):
         #self.parent.projectInfo.projDir = ''  # os.getcwd()
         #self.parent.projectInfo.srcDir = ''  # os.getcwd()
         self.curDir = QLabel('Image Directory: ')
-        self.curDir2 = QLabel(self.parent.projectInfo.projDir)
+        self.curDir2 = QLineEdit(self.parent.projectInfo.projDir)
         self.curDir2.setStyleSheet("""font-family: Roboto;font-style: normal;font-size: 14pt; padding:20px """)
-        self.curDir.resize(280, 40)
+        self.curDir2.resize(380, 40)
 
 
         self.sublayoutFormInputDir = QHBoxLayout()
@@ -226,7 +227,7 @@ class VisoarAskSource(QWidget):
         self.createErrorLabel.setStyleSheet("""color: #59040c""")
         self.sublayoutFormInputDir.addWidget(self.createErrorLabel)
 
-        self.sublayout.addLayout(self.sublayoutFormInputDir)
+
 
 
         self.buttons.home = QPushButton('', self)
@@ -252,6 +253,21 @@ class VisoarAskSource(QWidget):
         self.sublayoutLastRow.addStretch(100)
         self.sublayoutLastRow.addWidget(self.buttons.nextBtn, alignment=Qt.AlignRight)
         self.sublayout.addStretch(True)
+
+        print(self.parent.tabAskSensor.comboBoxNewTab.currentText() )
+        #if sensor is MapIR, then ask for location of target
+        #if (self.parent.tabAskSensor.comboBoxNewTab.currentText() == 'MAPIR and RGB' or self.parent.tabAskSensor.comboBoxNewTab.currentText() == "MapIR only (OCNIR)"):
+
+        self.mapirCalibrationWidget =   ViSOARMapIRCalibrationWidget(self)
+        # w = QWindow.fromWinId(self.mapirCalibrationWindow.get_xid())
+        # self.mapirCalibrationWidget = QWidget.createWindowContainer(self.mapirCalibrationWindow, self)
+        self.sublayout.addWidget(self.mapirCalibrationWidget)
+        self.mapirCalibrationWidget.setHidden(True)
+        self.mapirCalibrationWidget.on_hide()
+
+        self.sublayout.addLayout(self.sublayoutFormInputDir)
+        self.sublayout.addStretch(True)
+        self.sublayout.addLayout(self.sublayoutLastRow)
         self.sublayout.addLayout(self.sublayoutLastRow)
 
         self.setLayout(self.sublayout)

@@ -4,6 +4,8 @@
 from VisoarSettings import *
 
 #from slam2dWidget import *
+import faulthandler;
+faulthandler.enable()
 
 from ViSOARUIWidget import *
 from slampy.utils import *
@@ -24,7 +26,8 @@ else:
 
 T1=datetime.datetime.now()
 
-
+if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+    os.chdir(sys._MEIPASS)
 
 
 # IMPORTANT for WIndows

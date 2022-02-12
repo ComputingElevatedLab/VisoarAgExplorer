@@ -38,8 +38,26 @@ python -m slampy
 
 ```
 python -m pip install numpy matplotlib pymap3d pytz pyzbar scikit-image scipy pysolar json-tricks cmapy tifffile pyexiftool opencv-python opencv-contrib-python
-PYTHONPATH=.\build\RelWithDebInfo;.\Libs
-python -m slampy --directory [D:\GoogleSci\visus_slam\TaylorGrant]
+PYTHONPATH=.\build\RelWithDebInfo;.\VisoarAgExplorer
+python -m slampy --directory D:\GoogleSci\visus_slam\TaylorGrant
 ```
 
+
+if having trouble with PyQt:
+```
+python -m pip install PyQt5-sip  
+python -m pip install PyQtWebEngine
+python -m pip uninstall PyQtWebEngine
+python -m pip uninstall PyQt5 
+python -m pip uninstall PyQt5-sip 
+python -m pip install PyQt5  
+python -m pip install PyQt5-sip  
+python -m pip install PyQtWebEngine
+python -m pip install PyQt5  
+python -m pip install PyQt5-sip  
+python -m pip install PyQtWebEngine
+python -m pip install --upgrade OpenVisus
+python -m OpenVisus configure 
+
+```
 
