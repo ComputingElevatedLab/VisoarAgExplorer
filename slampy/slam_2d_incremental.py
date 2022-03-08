@@ -1,849 +1,860 @@
-import sys,os,platform,subprocess,glob,datetime
-import cv2
-import numpy
-import random
-import threading
-import time
+from slampy.image_provider import *
+from slampy.image_utils import *
 
-from OpenVisus import *
-from OpenVisus.__main__ import MidxToIdx
+from .image_provider_sequoia import ImageProviderSequoia
+from .image_provider_lumenera import ImageProviderLumenera
+from .image_provider_micasense import ImageProviderRedEdge
+from .image_provider_generic import ImageProviderGeneric
 
-from slampy.extract_keypoints import *
-from slampy.google_maps       import *
-from slampy.gps_utils         import *
-from slampy.find_matches      import *
-from slampy.image_provider    import *
-from slampy.image_utils       import *
-
-from . image_provider_sequoia   import ImageProviderSequoia
-from . image_provider_lumenera  import ImageProviderLumenera
-from . image_provider_micasense import ImageProviderRedEdge
-from . image_provider_generic   import ImageProviderGeneric
 
 # ///////////////////////////////////////////////////////////////////
 def ComposeImage(v, axis):
-		H = [single.shape[0] for single in v]
-		W = [single.shape[1] for single in v]
-		W,H=[(sum(W),max(H)),(max(W), sum(H))][axis]
-		shape=list(v[0].shape)
-		shape[0],shape[1]=H,W
-		ret=numpy.zeros(shape=shape,dtype=v[0].dtype)
-		cur=[0,0]
-		for single in v:
-			H,W=single.shape[0],single.shape[1]
-			ret[cur[1]:cur[1]+H,cur[0]:cur[0]+W,:]=single
-			cur[axis]+=[W,H][axis]
-		return ret
+    H = [single.shape[0] for single in v]
+    W = [single.shape[1] for single in v]
+    W, H = [(sum(W), max(H)), (max(W), sum(H))][axis]
+    shape = list(v[0].shape)
+    shape[0], shape[1] = H, W
+    ret = numpy.zeros(shape=shape, dtype=v[0].dtype)
+    cur = [0, 0]
+    for single in v:
+        H, W = single.shape[0], single.shape[1]
+        ret[cur[1]:cur[1] + H, cur[0]:cur[0] + W, :] = single
+        cur[axis] += [W, H][axis]
+    return ret
+
 
 # //////////////////////////////////////////
-def SaveDatasetPreview(db_filename, img_filename,width=1024):
-	db=LoadDataset(db_filename)
-	maxh=db.getMaxResolution()
-	logic_box=db.getLogicBox()
-	logic_size=db.getLogicSize()
-	print("Dataset has logic box",logic_box,"logic size",logic_size)
-	height=int(width*(logic_size[1]/logic_size[0]))
-	deltah=int(math.log2((logic_size[0]/width)*(logic_size[1]/height)))
-	data=db.read(logic_box=logic_box,max_resolution=maxh-deltah)
-	SaveImage(img_filename,data)
-	
+def SaveDatasetPreview(db_filename, img_filename, width=1024):
+    db = LoadDataset(db_filename)
+    maxh = db.getMaxResolution()
+    logic_box = db.getLogicBox()
+    logic_size = db.getLogicSize()
+    print("Dataset has logic box", logic_box, "logic size", logic_size)
+    height = int(width * (logic_size[1] / logic_size[0]))
+    deltah = int(math.log2((logic_size[0] / width) * (logic_size[1] / height)))
+    data = db.read(logic_box=logic_box, max_resolution=maxh - deltah)
+    SaveImage(img_filename, data)
+
 
 # ///////////////////////////////////////////////////////////////////
-def FindImages(image_dir,max_images=0):
-	
-	print("Finding images in",image_dir)
-	ret=[]
-	for filename in glob.glob(os.path.join(image_dir,"**/*.*"),recursive=True):
-		if not os.path.splitext(filename)[1].lower() in ('.jpg','.png','.tif','.bmp'): continue # look for extension, must be an image
-		if "~" in filename: continue # skip temporary files
-		if "VisusSlamFiles" in filename: continue # default is cache_dir is indie image_dir
-		print("Found image",len(ret),filename)
-		ret.append(filename)
-		if max_images and len(ret)>=max_images:
-			break
+def FindImages(image_dir, max_images=0):
+    print("Finding images in", image_dir)
+    ret = []
+    for filename in glob.glob(os.path.join(image_dir, "**/*.*"), recursive=True):
+        if not os.path.splitext(filename)[1].lower() in (
+        '.jpg', '.png', '.tif', '.bmp'): continue  # look for extension, must be an image
+        if "~" in filename: continue  # skip temporary files
+        if "VisusSlamFiles" in filename: continue  # default is cache_dir is indie image_dir
+        print("Found image", len(ret), filename)
+        ret.append(filename)
+        if max_images and len(ret) >= max_images:
+            break
 
-	if not ret:
-		raise Exception("Cannot find any image")
-	
-	return ret
-	
+    if not ret:
+        raise Exception("Cannot find any image")
+
+    return ret
+
+
 # ///////////////////////////////////////////////////////////////////
 def GuessProvider(filename):
-	# I need to guess what model is the drone (I use the metadata for that. see all CreateImageProviderInstance methods)
-	# try with some images in the middle (more probability of taking the flight images)
-	
-	reader=MetadataReader()
-	metadata=reader.readMetadata(filename)
-	reader.close()
+    # I need to guess what model is the drone (I use the metadata for that. see all CreateImageProviderInstance methods)
+    # try with some images in the middle (more probability of taking the flight images)
 
-	print("Trying to create provider from metatada")
-	acc=[]
-	for key,value in metadata.items():
-		print("\t",key,"=",value)
-		acc.append(str(value).lower())
-		
-	exif_make =str(metadata["EXIF:Make"]).lower()  if "EXIF:Make"  in metadata else ""
-	exif_model=str(metadata["EXIF:Model"]).lower() if "EXIF:Model" in metadata else ""
-	
-	if "sequoia" in exif_make or "sequoia" in exif_model:
-		print("Setting Sequoia provider")
-		return ImageProviderSequoia()
-		
-	if "lumenera" in exif_model or "lumenera" in exif_make:
-		print("Setting Lumenera provider")
-		return ImageProviderLumenera()		
-		
-	if "rededge" in " ".join(acc) or "micasense" in " ".join(acc):
-		print("Setting micasense provider")
-		return ImageProviderRedEdge()
+    reader = MetadataReader()
+    metadata = reader.readMetadata(filename)
+    reader.close()
 
-	print("Setting generic provider")
-	return ImageProviderGeneric()
-		
+    print("Trying to create provider from metatada")
+    acc = []
+    for key, value in metadata.items():
+        print("\t", key, "=", value)
+        acc.append(str(value).lower())
+
+    exif_make = str(metadata["EXIF:Make"]).lower() if "EXIF:Make" in metadata else ""
+    exif_model = str(metadata["EXIF:Model"]).lower() if "EXIF:Model" in metadata else ""
+
+    if "sequoia" in exif_make or "sequoia" in exif_model:
+        print("Setting Sequoia provider")
+        return ImageProviderSequoia()
+
+    if "lumenera" in exif_model or "lumenera" in exif_make:
+        print("Setting Lumenera provider")
+        return ImageProviderLumenera()
+
+    if "rededge" in " ".join(acc) or "micasense" in " ".join(acc):
+        print("Setting micasense provider")
+        return ImageProviderRedEdge()
+
+    print("Setting generic provider")
+    return ImageProviderGeneric()
 
 
 # //////////////////////////////////////////////////////////////////////////////
 class RedirectLog:
 
-	# constructor
-	def __init__(self, filename):
-		super().__init__()
-		os.makedirs(os.path.dirname(filename), exist_ok=True)
-		self.log=open(filename,'w')
-		self.__stdout__     = sys.stdout
-		self.__stderr__     = sys.stderr
-		self.__excepthook__ = sys.excepthook
-		sys.stdout=self
-		sys.stderr=self
-		sys.excepthook = self.excepthook
+    # constructor
+    def __init__(self, filename):
+        super().__init__()
+        os.makedirs(os.path.dirname(filename), exist_ok=True)
+        self.log = open(filename, 'w')
+        self.__stdout__ = sys.stdout
+        self.__stderr__ = sys.stderr
+        self.__excepthook__ = sys.excepthook
+        sys.stdout = self
+        sys.stderr = self
+        sys.excepthook = self.excepthook
 
-	# handler
-	def excepthook(self, exctype, value, traceback):
-		sys.stdout    =self.__stdout__
-		sys.stderr    =self.__stderr__
-		sys.excepthook=self.__excepthook__
-		sys.excepthook(exctype, value, traceback)
-		
-	# write
-	def write(self, msg):
-		msg=msg.replace("\n", "\n" + str(datetime.datetime.now())[0:-7] + " ")
-		sys.__stdout__.write(msg)
-		sys.__stdout__.flush()
-		self.log.write(msg)
+    # handler
+    def excepthook(self, exctype, value, traceback):
+        sys.stdout = self.__stdout__
+        sys.stderr = self.__stderr__
+        sys.excepthook = self.__excepthook__
+        sys.excepthook(exctype, value, traceback)
 
-	# flush
-	def flush(self):
-		sys.__stdout__.flush()
-		self.log.flush()
+    # write
+    def write(self, msg):
+        msg = msg.replace("\n", "\n" + str(datetime.datetime.now())[0:-7] + " ")
+        sys.__stdout__.write(msg)
+        sys.__stdout__.flush()
+        self.log.write(msg)
+
+    # flush
+    def flush(self):
+        sys.__stdout__.flush()
+        self.log.flush()
+
 
 # ///////////////////////////////////////////////////////////////////
 class Slam2D(Slam):
 
-	# constructor
-	def __init__(self):
+    # constructor
+    def __init__(self):
 
-		super(Slam2D,self).__init__()
+        super(Slam2D, self).__init__()
 
-		self.width              = 0
-		self.height             = 0
-		self.dtype              = DType()
-		self.calibration        = Calibration()
-		self.image_dir          = ""
-		self.cache_dir          = ""
+        self.width = 0
+        self.height = 0
+        self.dtype = DType()
+        self.calibration = Calibration()
+        self.image_dir = ""
+        self.cache_dir = ""
 
-		self.debug_mode         = False
-		self.energy_size        = 1280 
-		self.min_num_keypoints  = 3000
-		self.max_num_keypoints  = 6000
-		self.anms               = 1300
-		self.max_reproj_error   = 0.01 
-		self.ratio_check        = 0.8
-		self.calibration.bFixed = False 
-		self.ba_tolerance       = 0.005
+        self.debug_mode = False
+        self.energy_size = 1280
+        self.min_num_keypoints = 3000
+        self.max_num_keypoints = 6000
+        self.anms = 1300
+        self.max_reproj_error = 0.01
+        self.ratio_check = 0.8
+        self.calibration.bFixed = False
+        self.ba_tolerance = 0.005
 
-		self.images             = []
-		self.extractor          = None
-		self.extractor_method   = None
-		# which band to use for extraction with micasense imagery
-		self.micasense_band     = 0
+        self.images = []
+        self.extractor = None
+        self.extractor_method = None
+        # which band to use for extraction with micasense imagery
+        self.micasense_band = 0
 
-		# you can override using a physic_box from another sequence
-		self.physic_box         = None 
+        # you can override using a physic_box from another sequence
+        self.physic_box = None
 
-		self.enable_svg              = True
-		self.enable_color_matching   = False
-		self.do_bundle_adjustment    = True
-		
-	# setImageDirectory
-	def setImageDirectory(self, image_dir, cache_dir=None, telemetry=None, plane=None, calibration=None, physic_box=None,max_images=0,debug_mode=False):
-		
-		print("setImageDirectory")
-		print("\t","image_dir", repr(image_dir))
-		print("\t","cache_dir", repr(cache_dir))
-		print("\t","telemetry", repr(telemetry))
-		print("\t","plane", repr(plane))
-		print("\t","calibration", (calibration.f,calibration.cx,calibration.cy) if calibration else None)
-		print("\t","physic_box", physic_box.toString() if physic_box else None)
-		print("\t","max_images",max_images)		
-		
-		self.debug_mode=debug_mode
-		self.image_dir=image_dir
-		
-		images=FindImages(image_dir,max_images=max_images)
-		
-		self.cache_dir=cache_dir
-		TryRemoveFiles(self.cache_dir+'/~*')
-		os.makedirs(self.cache_dir,exist_ok=True)
-		
-		self.provider=GuessProvider(images[int(max(len(images)/2-1,0))])
-		self.provider.telemetry=telemetry
-		self.provider.plane=plane
-		self.provider.image_dir=self.image_dir
-		self.provider.cache_dir=self.cache_dir
-		self.provider.extractor_method=self.extractor_method
-		self.provider.calibration=calibration
-		self.provider.setImages(images)
-		
-		array=Array.fromNumPy(self.generateImage(self.provider.images[0]),TargetDim=2) 
-		self.width=array.getWidth()
-		self.height=array.getHeight()
+        self.enable_svg = True
+        self.enable_color_matching = False
+        self.do_bundle_adjustment = True
 
-		self.dtype=array.dtype
-		self.calibration=self.provider.calibration
-		self.physic_box=physic_box
+    # setImageDirectory
+    def setImageDirectory(self, image_dir, cache_dir=None, telemetry=None, plane=None, calibration=None,
+                          physic_box=None, max_images=0, debug_mode=False):
 
-		for img in self.provider.images:
-			camera=self.addCamera(img)
-			self.createIdx(camera)
+        print("setImageDirectory")
+        print("\t", "image_dir", repr(image_dir))
+        print("\t", "cache_dir", repr(cache_dir))
+        print("\t", "telemetry", repr(telemetry))
+        print("\t", "plane", repr(plane))
+        print("\t", "calibration", (calibration.f, calibration.cx, calibration.cy) if calibration else None)
+        print("\t", "physic_box", physic_box.toString() if physic_box else None)
+        print("\t", "max_images", max_images)
 
-		self.guessInitialPoses()
-		self.refreshQuads()
-		self.saveMidx()
-		
-		self.guessLocalCameras()
-		self.debugMatchesGraph()
-		self.debugSolution()
+        self.debug_mode = debug_mode
+        self.image_dir = image_dir
 
-		
-	# addCamera
-	def addCamera(self,img):
-		self.images.append(img)
-		camera=Camera()
-		camera.id=len(self.cameras)
-		camera.color = Color.random()
-		for filename in img.filenames:
-			camera.filenames.append(filename)
-		super().addCamera(camera)
-		return camera
+        images = FindImages(image_dir, max_images=max_images)
 
-	# createIdx
-	def createIdx(self, camera):
-		camera.idx_filename="./idx/{:04d}.idx".format(camera.id)
-		field=Field("myfield", self.dtype)
-		field.default_layout="row_major"
-		CreateIdx(url=self.cache_dir + "/" + camera.idx_filename, 
-				dim=2,
-				filename_template="./{:04d}.bin".format(camera.id), 
-				blocksperfile=-1,
-				fields=[field],
-				dims=(self.width, self.height))
+        self.cache_dir = cache_dir
+        TryRemoveFiles(self.cache_dir + '/~*')
+        os.makedirs(self.cache_dir, exist_ok=True)
 
-	# startAction
-	def startAction(self,N,message):
-		print("Starting action",N,message,"...")
+        self.provider = GuessProvider(images[int(max(len(images) / 2 - 1, 0))])
+        self.provider.telemetry = telemetry
+        self.provider.plane = plane
+        self.provider.image_dir = self.image_dir
+        self.provider.cache_dir = self.cache_dir
+        self.provider.extractor_method = self.extractor_method
+        self.provider.calibration = calibration
+        self.provider.setImages(images)
 
-	# advanceAction
-	def advanceAction(self,I):
-		# print("Advance action",I)
-		pass
+        array = Array.fromNumPy(self.generateImage(self.provider.images[0]), TargetDim=2)
+        self.width = array.getWidth()
+        self.height = array.getHeight()
 
-	# endAction
-	def endAction(self):
-		print("End action")
+        self.dtype = array.dtype
+        self.calibration = self.provider.calibration
+        self.physic_box = physic_box
 
-	# showEnergy
-	def showEnergy(self,camera,energy):
-		if self.debug_mode:
-			SaveImage(self.cache_dir+"/energy/%04d.tif" % (camera.id,), energy)
+        for img in self.provider.images:
+            camera = self.addCamera(img)
+            self.createIdx(camera)
 
-	# guessLocalCameras
-	def guessLocalCameras(self):
+        self.guessInitialPoses()
+        self.refreshQuads()
+        self.saveMidx()
 
-		box = self.getQuadsBox()
+        self.guessLocalCameras()
+        self.debugMatchesGraph()
+        self.debugSolution()
 
-		x1i = math.floor(box.p1[0]); x2i = math.ceil(box.p2[0])
-		y1i = math.floor(box.p1[1]); y2i = math.ceil(box.p2[1])
-		rect=(x1i, y1i, (x2i - x1i), (y2i - y1i))
+    # addCamera
+    def addCamera(self, img):
+        self.images.append(img)
+        camera = Camera()
+        camera.id = len(self.cameras)
+        camera.color = Color.random()
+        for filename in img.filenames:
+            camera.filenames.append(filename)
+        super().addCamera(camera)
+        return camera
 
-		subdiv=cv2.Subdiv2D(rect)
+    # createIdx
+    def createIdx(self, camera):
+        camera.idx_filename = "./idx/{:04d}.idx".format(camera.id)
+        field = Field("myfield", self.dtype)
+        field.default_layout = "row_major"
+        CreateIdx(url=self.cache_dir + "/" + camera.idx_filename,
+                  dim=2,
+                  filename_template="./{:04d}.bin".format(camera.id),
+                  blocksperfile=-1,
+                  fields=[field],
+                  dims=(self.width, self.height))
 
-		find_camera=dict()
-		for camera in self.cameras:
-			center = camera.quad.centroid()
-			center = (numpy.float32(center.x),numpy.float32(center.y))
-			if center in find_camera:
-				print("The following cameras seems to be in the same position: ",find_camera[center].id,camera.id)
-			else:
-				find_camera[center] = camera
-				subdiv.insert(center)
+    # startAction
+    def startAction(self, N, message):
+        print("Starting action", N, message, "...")
 
-		cells, centers=subdiv.getVoronoiFacetList([])
-		assert(len(cells) == len(centers))
+    # advanceAction
+    def advanceAction(self, I):
+        # print("Advance action",I)
+        pass
 
-		# find edges
-		edges=dict()
-		for Cell in range(len(cells)):
-			cell = cells[Cell]
-			center = (numpy.float32(centers[Cell][0]), numpy.float32(centers[Cell][1]))
+    # endAction
+    def endAction(self):
+        print("End action")
 
-			camera = find_camera[center]
+    # showEnergy
+    def showEnergy(self, camera, energy):
+        if self.debug_mode:
+            SaveImage(self.cache_dir + "/energy/%04d.tif" % (camera.id,), energy)
 
-			for I in range(len(cell)):
-				pt0 = cell[(I + 0) % len(cell)]
-				pt1 = cell[(I + 1) % len(cell)]
-				k0=(pt0[0], pt0[1], pt1[0], pt1[1]) 
-				k1=(pt1[0], pt1[1], pt0[0], pt0[1]) 
+    # guessLocalCameras
+    def guessLocalCameras(self):
 
-				if not k0 in edges: edges[k0]=set()
-				if not k1 in edges: edges[k1]=set()
+        box = self.getQuadsBox()
 
-				edges[k0].add(camera)
-				edges[k1].add(camera)
-				
-		for k in edges:
-			adjacent = tuple(edges[k])
-			for A in range(0,len(adjacent)-1):
-				for B in range(A+1,len(adjacent)):
-					camera1 = adjacent[A]
-					camera2 = adjacent[B]
-					camera1.addLocalCamera(camera2)
+        x1i = math.floor(box.p1[0]);
+        x2i = math.ceil(box.p2[0])
+        y1i = math.floor(box.p1[1]);
+        y2i = math.ceil(box.p2[1])
+        rect = (x1i, y1i, (x2i - x1i), (y2i - y1i))
 
-		# insert prev and next
-		N=self.cameras.size()
-		for I in range(N):
-			camera2 = self.cameras[I]
+        subdiv = cv2.Subdiv2D(rect)
 
-			# insert prev and next
-			if (I-1) >= 0:
-				camera2.addLocalCamera(self.cameras[I - 1])
+        find_camera = dict()
+        for camera in self.cameras:
+            center = camera.quad.centroid()
+            center = (numpy.float32(center.x), numpy.float32(center.y))
+            if center in find_camera:
+                print("The following cameras seems to be in the same position: ", find_camera[center].id, camera.id)
+            else:
+                find_camera[center] = camera
+                subdiv.insert(center)
 
-			if (I+1) < N:
-				camera2.addLocalCamera(self.cameras[I + 1])
+        cells, centers = subdiv.getVoronoiFacetList([])
+        assert (len(cells) == len(centers))
 
-		#enlarge a little 
-		if True:
+        # find edges
+        edges = dict()
+        for Cell in range(len(cells)):
+            cell = cells[Cell]
+            center = (numpy.float32(centers[Cell][0]), numpy.float32(centers[Cell][1]))
 
-			new_local_cameras={}
+            camera = find_camera[center]
 
-			for camera1 in self.cameras:
+            for I in range(len(cell)):
+                pt0 = cell[(I + 0) % len(cell)]
+                pt1 = cell[(I + 1) % len(cell)]
+                k0 = (pt0[0], pt0[1], pt1[0], pt1[1])
+                k1 = (pt1[0], pt1[1], pt0[0], pt0[1])
 
-				new_local_cameras[camera1]=set()
+                if not k0 in edges: edges[k0] = set()
+                if not k1 in edges: edges[k1] = set()
 
-				for camera2 in camera1.getAllLocalCameras():
+                edges[k0].add(camera)
+                edges[k1].add(camera)
 
-					# euristic to say: do not take cameras on the same drone flight "row"
-					prev2=self.previousCamera(camera2)
-					next2=self.nextCamera(camera2)
-					if prev2!=camera1 and next2!=camera1:
-						if prev2: new_local_cameras[camera1].add(prev2)
-						if next2: new_local_cameras[camera1].add(next2)
+        for k in edges:
+            adjacent = tuple(edges[k])
+            for A in range(0, len(adjacent) - 1):
+                for B in range(A + 1, len(adjacent)):
+                    camera1 = adjacent[A]
+                    camera2 = adjacent[B]
+                    camera1.addLocalCamera(camera2)
 
-			for camera1 in new_local_cameras:
-				for camera3 in new_local_cameras[camera1]:
-					camera1.addLocalCamera(camera3)
-					
-		# draw the image
-		if True:
-			w = float(box.size()[0])
-			h = float(box.size()[1])
+        # insert prev and next
+        N = self.cameras.size()
+        for I in range(N):
+            camera2 = self.cameras[I]
 
-			W = int(4096)
-			H = int(h * (W/w))
-			out = numpy.zeros((H, W, 3), dtype="uint8")
-			out.fill(255)
+            # insert prev and next
+            if (I - 1) >= 0:
+                camera2.addLocalCamera(self.cameras[I - 1])
 
-			def toScreen(p):
-				return [
-					int(0+(p[0]-box.p1[0])*(W/w)),
-					int(H-(p[1]-box.p1[1])*(H/h))]
+            if (I + 1) < N:
+                camera2.addLocalCamera(self.cameras[I + 1])
 
-			for I in range(len(cells)):
-				cell=cells[I]
-				center=(numpy.float32(centers[I][0]), numpy.float32(centers[I][1]))
-				camera2 = find_camera[center]
-				center=toScreen(center)
-				cell=numpy.array([toScreen(it) for it in cell],dtype=numpy.int32)
-				cv2.fillConvexPoly(out, cell, [random.randint(0,255) ,random.randint(0,255) ,random.randint(0,255) ])
-				cv2.polylines(out, [cell], True, [0,0,0], 3)
-				cv2.putText(out, str(camera2.id), (int(center[0]),int(center[1])), cv2.FONT_HERSHEY_COMPLEX_SMALL, 1.0, [0,0,0])
+        # enlarge a little
+        if True:
 
-			SaveImage(self.cache_dir+"/~local_cameras.png", out)
+            new_local_cameras = {}
 
-	# guessInitialPoses
-	def guessInitialPoses(self):
-		lat0,lon0=self.images[0].lat, self.images[0].lon
-		for I,camera in enumerate(self.cameras):
-			lat,lon,alt=self.images[I].lat, self.images[I].lon,self.images[I].alt
-			x,y=GPSUtils.gpsToLocalCartesian(lat,lon,lat0,lon0)
-			world_center=Point3d(x,y,alt)
-			img=self.images[I]
-			q = Quaternion(Point3d(0, 0, 1), -img.yaw) *  Quaternion(Point3d(1, 0, 0), math.pi)
-			camera.pose = Pose(q, world_center).inverse()
+            for camera1 in self.cameras:
 
-	# saveMidx
-	def saveMidx(self):
+                new_local_cameras[camera1] = set()
 
-		print("Saving midx")
-		lat0,lon0=self.images[0].lat,self.images[0].lon
+                for camera2 in camera1.getAllLocalCameras():
 
-		logic_box = self.getQuadsBox()
+                    # euristic to say: do not take cameras on the same drone flight "row"
+                    prev2 = self.previousCamera(camera2)
+                    next2 = self.nextCamera(camera2)
+                    if prev2 != camera1 and next2 != camera1:
+                        if prev2: new_local_cameras[camera1].add(prev2)
+                        if next2: new_local_cameras[camera1].add(next2)
 
-		# instead of working in range -180,+180 -90,+90 (worldwise ref frame) I normalize the range in [0,1]*[0,1]
-		# physic box is in the range [0,1]*[0,1]
-		# logic_box is in pixel coordinates
-		# NOTE: I can override the physic box by command line
-		physic_box=self.physic_box
-		if physic_box is not None:
-			print("Using physic_box forced by the user", physic_box.toString())
-		else:
-			physic_box=BoxNd.invalid()
-			for I, camera in enumerate(self.cameras):
-				quad=self.computeWorldQuad(camera)
-				for point in quad.points:
-					lat,lon=GPSUtils.localCartesianToGps(point.x, point.y,lat0, lon0)
-					alpha,beta=GPSUtils.gpsToUnit(lat,lon)
-					physic_box.addPoint(PointNd(Point2d(alpha,beta)))
+            for camera1 in new_local_cameras:
+                for camera3 in new_local_cameras[camera1]:
+                    camera1.addLocalCamera(camera3)
 
-		logic_centers=[]
-		for I, camera in enumerate(self.cameras):
-			p=camera.getWorldCenter()
-			lat,lon,alt=*GPSUtils.localCartesianToGps(p.x, p.y, lat0, lon0),p.z
-			alpha,beta=GPSUtils.gpsToUnit(lat,lon)
-			alpha=(alpha-physic_box.p1[0])/float(physic_box.size()[0])
-			beta =(beta -physic_box.p1[1])/float(physic_box.size()[1])
-			logic_x=logic_box.p1[0]+alpha*logic_box.size()[0]
-			logic_y=logic_box.p1[1]+beta *logic_box.size()[1]
-			logic_centers.append((logic_x,logic_y))
+        # draw the image
+        if True:
+            w = float(box.size()[0])
+            h = float(box.size()[1])
 
-		lines=[]
+            W = int(4096)
+            H = int(h * (W / w))
+            out = numpy.zeros((H, W, 3), dtype="uint8")
+            out.fill(255)
 
-		# this is the midx
-		lines.append("<dataset typename='IdxMultipleDataset' logic_box='%s %s %s %s' physic_box='%s %s %s %s'>" % (
-			cstring(int(logic_box.p1[0])),cstring(int(logic_box.p2[0])),cstring(int(logic_box.p1[1])),cstring(int(logic_box.p2[1])),
-			cstring10(physic_box.p1[0]),cstring10(physic_box.p2[0]),cstring10(physic_box.p1[1]),cstring10(physic_box.p2[1])))
-		lines.append("")
+            def toScreen(p):
+                return [
+                    int(0 + (p[0] - box.p1[0]) * (W / w)),
+                    int(H - (p[1] - box.p1[1]) * (H / h))]
 
-		# dump some information about the slam
-		lines.append("<slam width='%s' height='%s' dtype='%s' calibration='%s %s %s' />" % (
-			cstring(self.width),cstring(self.height),self.dtype.toString(),
-			cstring(self.calibration.f),cstring(self.calibration.cx),cstring(self.calibration.cy)))
-		lines.append("")
+            for I in range(len(cells)):
+                cell = cells[I]
+                center = (numpy.float32(centers[I][0]), numpy.float32(centers[I][1]))
+                camera2 = find_camera[center]
+                center = toScreen(center)
+                cell = numpy.array([toScreen(it) for it in cell], dtype=numpy.int32)
+                cv2.fillConvexPoly(out, cell, [random.randint(0, 255), random.randint(0, 255), random.randint(0, 255)])
+                cv2.polylines(out, [cell], True, [0, 0, 0], 3)
+                cv2.putText(out, str(camera2.id), (int(center[0]), int(center[1])), cv2.FONT_HERSHEY_COMPLEX_SMALL, 1.0,
+                            [0, 0, 0])
 
-		if (isinstance(self.provider, ImageProviderRedEdge)):
-			# if we're using a micasense camera, create a field for each band
-			for n in range(0, len(self.images[0].filenames)):
-				lines.append(f"<field name='band{n}'><code>output=voronoi()[{n}]</code></field>")
-			
-		else: 
-			# this is the default field
-			lines.append("<field name='blend'><code>output=voronoi()</code></field>")
+            SaveImage(self.cache_dir + "/~local_cameras.png", out)
 
-		lines.append("")
+    # guessInitialPoses
+    def guessInitialPoses(self):
+        lat0, lon0 = self.images[0].lat, self.images[0].lon
+        for I, camera in enumerate(self.cameras):
+            lat, lon, alt = self.images[I].lat, self.images[I].lon, self.images[I].alt
+            x, y = GPSUtils.gpsToLocalCartesian(lat, lon, lat0, lon0)
+            world_center = Point3d(x, y, alt)
+            img = self.images[I]
+            q = Quaternion(Point3d(0, 0, 1), -img.yaw) * Quaternion(Point3d(1, 0, 0), math.pi)
+            camera.pose = Pose(q, world_center).inverse()
 
-		# how to go from logic_box (i.e. pixel) -> physic box ([0,1]*[0,1])
-		lines.append("<translate x='%s' y='%s'>" % (cstring10(physic_box.p1[0]),cstring10(physic_box.p1[1])))
-		lines.append("<scale     x='%s' y='%s'>" % (cstring10(physic_box.size()[0]/logic_box.size()[0]),cstring10(physic_box.size()[1]/logic_box.size()[1])))
-		lines.append("<translate x='%s' y='%s'>" % (cstring10(-logic_box.p1[0]),cstring10(-logic_box.p1[1])))
-		lines.append("")
+    # saveMidx
+    def saveMidx(self):
 
-		if self.enable_svg:
-			W=int(1024)
-			H=int(W*(logic_box.size()[1]/float(logic_box.size()[0])))
+        print("Saving midx")
+        lat0, lon0 = self.images[0].lat, self.images[0].lon
 
-			lines.append("<svg width='%s' height='%s' viewBox='%s %s %s %s' >" % (
-				cstring(W),
-				cstring(H),
-				cstring(int(logic_box.p1[0])),
-				cstring(int(logic_box.p1[1])),
-				cstring(int(logic_box.p2[0])),
-				cstring(int(logic_box.p2[1]))))
+        logic_box = self.getQuadsBox()
 
-			lines.append("<g stroke='#000000' stroke-width='1' fill='#ffff00' fill-opacity='0.3'>")
-			for I, camera in enumerate(self.cameras):
-				lines.append("\t<poi point='%s,%s' />" % (cstring(logic_centers[I][0]),cstring(logic_centers[I][1])))
-			lines.append("</g>")
+        # instead of working in range -180,+180 -90,+90 (worldwise ref frame) I normalize the range in [0,1]*[0,1]
+        # physic box is in the range [0,1]*[0,1]
+        # logic_box is in pixel coordinates
+        # NOTE: I can override the physic box by command line
+        physic_box = self.physic_box
+        if physic_box is not None:
+            print("Using physic_box forced by the user", physic_box.toString())
+        else:
+            physic_box = BoxNd.invalid()
+            for I, camera in enumerate(self.cameras):
+                quad = self.computeWorldQuad(camera)
+                for point in quad.points:
+                    lat, lon = GPSUtils.localCartesianToGps(point.x, point.y, lat0, lon0)
+                    alpha, beta = GPSUtils.gpsToUnit(lat, lon)
+                    physic_box.addPoint(PointNd(Point2d(alpha, beta)))
 
-			lines.append("<g fill-opacity='0.0' stroke-opacity='0.5' stroke-width='2'>")
-			for I, camera in enumerate(self.cameras):
-				lines.append("\t<polygon points='%s' stroke='%s' />" % (camera.quad.toString(","," "),camera.color.toString()[0:7]))
-			lines.append("</g>")
+        logic_centers = []
+        for I, camera in enumerate(self.cameras):
+            p = camera.getWorldCenter()
+            lat, lon, alt = *GPSUtils.localCartesianToGps(p.x, p.y, lat0, lon0), p.z
+            alpha, beta = GPSUtils.gpsToUnit(lat, lon)
+            alpha = (alpha - physic_box.p1[0]) / float(physic_box.size()[0])
+            beta = (beta - physic_box.p1[1]) / float(physic_box.size()[1])
+            logic_x = logic_box.p1[0] + alpha * logic_box.size()[0]
+            logic_y = logic_box.p1[1] + beta * logic_box.size()[1]
+            logic_centers.append((logic_x, logic_y))
 
-			lines.append("</svg>")
-			lines.append("")
+        lines = []
 
-		for I, camera in enumerate(self.cameras):
-			p=camera.getWorldCenter()
-			lat,lon,alt=*GPSUtils.localCartesianToGps(p.x, p.y, lat0, lon0),p.z
-			lines.append("<dataset url='%s' color='%s' quad='%s' filenames='%s' q='%s' t='%s' lat='%s' lon='%s' alt='%s' />" %(
-				camera.idx_filename,
-				camera.color.toString(),
-				camera.quad.toString(),
-				";".join(camera.filenames),
-				camera.pose.q.toString(),
-				camera.pose.t.toString(),
-				cstring10(lat),cstring10(lon),cstring10(alt)))
-			
-		lines.append("")
-		lines.append("</translate>")
-		lines.append("</scale>")
-		lines.append("</translate>")
-		lines.append("")
-		lines.append("</dataset>")
+        # this is the midx
+        lines.append("<dataset typename='IdxMultipleDataset' logic_box='%s %s %s %s' physic_box='%s %s %s %s'>" % (
+            cstring(int(logic_box.p1[0])), cstring(int(logic_box.p2[0])), cstring(int(logic_box.p1[1])),
+            cstring(int(logic_box.p2[1])),
+            cstring10(physic_box.p1[0]), cstring10(physic_box.p2[0]), cstring10(physic_box.p1[1]),
+            cstring10(physic_box.p2[1])))
+        lines.append("")
 
-		SaveTextDocument(self.cache_dir+"/visus.midx","\n".join(lines))
-		print("Midx Saved")
+        # dump some information about the slam
+        lines.append("<slam width='%s' height='%s' dtype='%s' calibration='%s %s %s' />" % (
+            cstring(self.width), cstring(self.height), self.dtype.toString(),
+            cstring(self.calibration.f), cstring(self.calibration.cx), cstring(self.calibration.cy)))
+        lines.append("")
 
-		print("Saving google")
-		SaveTextDocument(self.cache_dir+"/google.midx",
-"""
+        if (isinstance(self.provider, ImageProviderRedEdge)):
+            # if we're using a micasense camera, create a field for each band
+            for n in range(0, len(self.images[0].filenames)):
+                lines.append(f"<field name='band{n}'><code>output=voronoi()[{n}]</code></field>")
+
+        else:
+            # this is the default field
+            lines.append("<field name='blend'><code>output=voronoi()</code></field>")
+
+        lines.append("")
+
+        # how to go from logic_box (i.e. pixel) -> physic box ([0,1]*[0,1])
+        lines.append("<translate x='%s' y='%s'>" % (cstring10(physic_box.p1[0]), cstring10(physic_box.p1[1])))
+        lines.append("<scale     x='%s' y='%s'>" % (
+        cstring10(physic_box.size()[0] / logic_box.size()[0]), cstring10(physic_box.size()[1] / logic_box.size()[1])))
+        lines.append("<translate x='%s' y='%s'>" % (cstring10(-logic_box.p1[0]), cstring10(-logic_box.p1[1])))
+        lines.append("")
+
+        if self.enable_svg:
+            W = int(1024)
+            H = int(W * (logic_box.size()[1] / float(logic_box.size()[0])))
+
+            lines.append("<svg width='%s' height='%s' viewBox='%s %s %s %s' >" % (
+                cstring(W),
+                cstring(H),
+                cstring(int(logic_box.p1[0])),
+                cstring(int(logic_box.p1[1])),
+                cstring(int(logic_box.p2[0])),
+                cstring(int(logic_box.p2[1]))))
+
+            lines.append("<g stroke='#000000' stroke-width='1' fill='#ffff00' fill-opacity='0.3'>")
+            for I, camera in enumerate(self.cameras):
+                lines.append("\t<poi point='%s,%s' />" % (cstring(logic_centers[I][0]), cstring(logic_centers[I][1])))
+            lines.append("</g>")
+
+            lines.append("<g fill-opacity='0.0' stroke-opacity='0.5' stroke-width='2'>")
+            for I, camera in enumerate(self.cameras):
+                lines.append("\t<polygon points='%s' stroke='%s' />" % (
+                camera.quad.toString(",", " "), camera.color.toString()[0:7]))
+            lines.append("</g>")
+
+            lines.append("</svg>")
+            lines.append("")
+
+        for I, camera in enumerate(self.cameras):
+            p = camera.getWorldCenter()
+            lat, lon, alt = *GPSUtils.localCartesianToGps(p.x, p.y, lat0, lon0), p.z
+            lines.append(
+                "<dataset url='%s' color='%s' quad='%s' filenames='%s' q='%s' t='%s' lat='%s' lon='%s' alt='%s' />" % (
+                    camera.idx_filename,
+                    camera.color.toString(),
+                    camera.quad.toString(),
+                    ";".join(camera.filenames),
+                    camera.pose.q.toString(),
+                    camera.pose.t.toString(),
+                    cstring10(lat), cstring10(lon), cstring10(alt)))
+
+        lines.append("")
+        lines.append("</translate>")
+        lines.append("</scale>")
+        lines.append("</translate>")
+        lines.append("")
+        lines.append("</dataset>")
+
+        SaveTextDocument(self.cache_dir + "/visus.midx", "\n".join(lines))
+        print("Midx Saved")
+
+        print("Saving google")
+        SaveTextDocument(self.cache_dir + "/google.midx",
+                         """
 <dataset name='slam' typename='IdxMultipleDataset'>
 	<field name='voronoi'><code>output=voronoi()</code></field>
 	<dataset typename='GoogleMapsDataset' tiles='http://mt1.google.com/vt/lyrs=s' physic_box='0.0 1.0 0.0 1.0' />
 	<dataset name='visus'   url='./visus.midx' />
 </dataset>
 """)
-		print("Google Saved")
+        print("Google Saved")
 
+    # debugMatchesGraph
+    def debugMatchesGraph(self):
 
-	# debugMatchesGraph
-	def debugMatchesGraph(self):
+        box = self.getQuadsBox()
 
-		box = self.getQuadsBox()
+        w = float(box.size()[0])
+        h = float(box.size()[1])
 
-		w = float(box.size()[0])
-		h = float(box.size()[1])
+        W = int(4096)
+        H = int(h * (W / w))
+        out = numpy.zeros((H, W, 4), dtype="uint8")
+        out.fill(255)
 
-		W = int(4096)
-		H = int(h * (W/w))
-		out = numpy.zeros((H, W, 4), dtype="uint8")
-		out.fill(255)
+        def getImageCenter(camera):
+            p = camera.quad.centroid()
+            return (
+                int(0 + (p[0] - box.p1[0]) * (W / w)),
+                int(H - (p[1] - box.p1[1]) * (H / h)))
 
-		def getImageCenter(camera):
-			p=camera.quad.centroid()
-			return (
-				int(0+(p[0]-box.p1[0])*(W/w)),
-				int(H-(p[1]-box.p1[1])*(H/h)))
+        for bGoodMatches in [False, True]:
+            for A in self.cameras:
+                local_cameras = A.getAllLocalCameras()
+                for J in range(local_cameras.size()):
+                    B = local_cameras[J]
+                    edge = A.getEdge(B)
+                    if A.id < B.id and bGoodMatches == (True if edge.isGood() else False):
+                        p0 = getImageCenter(A)
+                        p1 = getImageCenter(B)
+                        color = [0, 0, 0, 255] if edge.isGood() else [211, 211, 211, 255]
+                        cv2.line(out, p0, p1, color, 1)
+                        num_matches = edge.matches.size()
+                        if num_matches > 0:
+                            cx = int(0.5 * (p0[0] + p1[0]))
+                            cy = int(0.5 * (p0[1] + p1[1]))
+                            cv2.putText(out, str(num_matches), (cx, cy), cv2.FONT_HERSHEY_COMPLEX_SMALL, 1.0, color)
 
-		for bGoodMatches in [False,True]:
-			for A in self.cameras :
-				local_cameras=A.getAllLocalCameras()
-				for J in range(local_cameras.size()):
-					B=local_cameras[J]
-					edge=A.getEdge(B)
-					if A.id < B.id and bGoodMatches == (True if edge.isGood() else False):
-						p0 = getImageCenter(A)
-						p1 = getImageCenter(B)
-						color = [0,0,0, 255] if edge.isGood() else [211,211,211, 255]
-						cv2.line(out, p0, p1, color, 1)
-						num_matches = edge.matches.size()
-						if num_matches>0:
-							cx=int(0.5*(p0[0]+p1[0]))
-							cy=int(0.5*(p0[1]+p1[1]))
-							cv2.putText(out, str(num_matches), (cx,cy), cv2.FONT_HERSHEY_COMPLEX_SMALL, 1.0, color)
+        for camera in self.cameras:
+            center = getImageCenter(camera)
+            cv2.putText(out, str(camera.id), (center[0], center[1]), cv2.FONT_HERSHEY_COMPLEX_SMALL, 1.0,
+                        [0, 0, 0, 255])
 
-		for camera in self.cameras :
-			center=getImageCenter(camera)
-			cv2.putText(out, str(camera.id), (center[0],center[1]), cv2.FONT_HERSHEY_COMPLEX_SMALL, 1.0, [0,0,0,255])
-			
-		SaveImage(GuessUniqueFilename(self.cache_dir+"/~matches%d.png"), out)
+        SaveImage(GuessUniqueFilename(self.cache_dir + "/~matches%d.png"), out)
 
-	# debugSolution
-	def debugSolution(self):
+    # debugSolution
+    def debugSolution(self):
 
-		box = self.getQuadsBox()
+        box = self.getQuadsBox()
 
-		w = float(box.size()[0])
-		h = float(box.size()[1])
+        w = float(box.size()[0])
+        h = float(box.size()[1])
 
-		W = int(4096)
-		H = int(h * (W/w))
-		out = numpy.zeros((H, W, 4), dtype="uint8")
-		out.fill(255)
+        W = int(4096)
+        H = int(h * (W / w))
+        out = numpy.zeros((H, W, 4), dtype="uint8")
+        out.fill(255)
 
-		def toScreen(p):
-			return (
-				int(0+(p[0]-box.p1[0])*(W/w)),
-				int(H-(p[1]-box.p1[1])*(H/h)))
+        def toScreen(p):
+            return (
+                int(0 + (p[0] - box.p1[0]) * (W / w)),
+                int(H - (p[1] - box.p1[1]) * (H / h)))
 
-		for camera2 in self.cameras:
-			color=(int(255*camera2.color.getRed()),int(255*camera2.color.getGreen()),int(255*camera2.color.getBlue()),255)
-			points=numpy.array([toScreen(it) for it in camera2.quad.points],dtype=numpy.int32)
-			cv2.polylines(out, [points], True, color, 3)
-			cv2.putText(out, str(camera2.id), toScreen(camera2.quad.points[0]), cv2.FONT_HERSHEY_COMPLEX_SMALL, 1.0, color)
+        for camera2 in self.cameras:
+            color = (
+            int(255 * camera2.color.getRed()), int(255 * camera2.color.getGreen()), int(255 * camera2.color.getBlue()),
+            255)
+            points = numpy.array([toScreen(it) for it in camera2.quad.points], dtype=numpy.int32)
+            cv2.polylines(out, [points], True, color, 3)
+            cv2.putText(out, str(camera2.id), toScreen(camera2.quad.points[0]), cv2.FONT_HERSHEY_COMPLEX_SMALL, 1.0,
+                        color)
 
-		SaveImage(GuessUniqueFilename(self.cache_dir+"/~solution%d.png"), out)
+        SaveImage(GuessUniqueFilename(self.cache_dir + "/~solution%d.png"), out)
 
-	# doPostIterationAction
-	def doPostIterationAction(self):
-		self.debugSolution()
-		self.debugMatchesGraph()
+    # doPostIterationAction
+    def doPostIterationAction(self):
+        self.debugSolution()
+        self.debugMatchesGraph()
 
-	# convertAndExtract
-	def convertAndExtract(self,args):
+    # convertAndExtract
+    def convertAndExtract(self, args):
 
-		extraction_start = time.time()
+        extraction_start = time.time()
 
-		I, (img, camera) = args
-		
-		if not self.extractor:
-			self.extractor=ExtractKeyPoints(self.min_num_keypoints,self.max_num_keypoints,self.anms,self.extractor_method)
+        I, (img, camera) = args
 
-		if self.enable_color_matching:
-			color_matching_ref = None		
+        if not self.extractor:
+            self.extractor = ExtractKeyPoints(self.min_num_keypoints, self.max_num_keypoints, self.anms,
+                                              self.extractor_method)
 
-		self.advanceAction(I)
+        if self.enable_color_matching:
+            color_matching_ref = None
 
-		print(f"extraction time in ms: {(time.time() - extraction_start) * 1000}")
-		
-		# create idx and extract keypoints
-		keypoint_filename = self.cache_dir+"/keypoints/%04d" % (camera.id,)
-		idx_filename      = self.cache_dir+"/" + camera.idx_filename
-	
-		if not self.debug_mode and self.loadKeyPoints(camera,keypoint_filename) and os.path.isfile(idx_filename) and os.path.isfile(idx_filename.replace(".idx",".bin")):
-			print("Keypoints already stored and idx generated",img.filenames[0])
-			
-		else:
+        self.advanceAction(I)
 
-			generate_start = time.time()
-			
-			full = self.generateImage(img)
-			Assert(isinstance(full, numpy.ndarray))
+        print(f"extraction time in ms: {(time.time() - extraction_start) * 1000}")
 
-			print(f"generate time in ms: {(time.time() - generate_start) * 1000}")
+        # create idx and extract keypoints
+        keypoint_filename = self.cache_dir + "/keypoints/%04d" % (camera.id,)
+        idx_filename = self.cache_dir + "/" + camera.idx_filename
 
-			# Match Histograms
-			if self.enable_color_matching:
-				if color_matching_ref:
-					print("doing color matching...")
-					MatchHistogram(full, color_matching_ref) 
-				else:
-					color_matching_ref = full
+        if not self.debug_mode and self.loadKeyPoints(camera, keypoint_filename) and os.path.isfile(
+                idx_filename) and os.path.isfile(idx_filename.replace(".idx", ".bin")):
+            print("Keypoints already stored and idx generated", img.filenames[0])
 
-			dataset_start = time.time()
+        else:
 
-			dataset = LoadDataset(idx_filename)
-			
-			# slow: first write then compress
-			#dataset.write(full)
-			#dataset.compressDataset(["lz4"],Array.fromNumPy(full,TargetDim=2, bShareMem=True)) # write zipped full 
+            generate_start = time.time()
 
-			# fast: compress in-place
-			comp=["lz4"]#,"jpg-JPEG_QUALITYGOOD-JPEG_SUBSAMPLING_420-JPEG_OPTIMIZE" ,"jpg-JPEG_QUALITYGOOD-JPEG_SUBSAMPLING_420-JPEG_OPTIMIZE","jpg-JPEG_QUALITYGOOD-JPEG_SUBSAMPLING_420-JPEG_OPTIMIZE"]
-			dataset.compressDataset(comp,Array.fromNumPy(full,TargetDim=2, bShareMem=True)) # write zipped full 
+            full = self.generateImage(img)
+            Assert(isinstance(full, numpy.ndarray))
 
-			dataset_end = time.time()
+            print(f"generate time in ms: {(time.time() - generate_start) * 1000}")
 
-			print(f"dataset write time in ms: {(dataset_end - dataset_start) * 1000}")
+            # Match Histograms
+            if self.enable_color_matching:
+                if color_matching_ref:
+                    print("doing color matching...")
+                    MatchHistogram(full, color_matching_ref)
+                else:
+                    color_matching_ref = full
 
-			convert_start = time.time()
+            dataset_start = time.time()
 
+            dataset = LoadDataset(idx_filename)
 
-			energy = None
+            # slow: first write then compress
+            # dataset.write(full)
+            # dataset.compressDataset(["lz4"],Array.fromNumPy(full,TargetDim=2, bShareMem=True)) # write zipped full
 
-			# if we're using micasense imagery, select the band specified by the user for extraction
-			if (isinstance(self.provider, ImageProviderRedEdge)):
-				print(f"Using band index {self.micasense_band} for extraction")
-				energy = full[:,:,self.micasense_band]
-			else:
-				energy=ConvertImageToGrayScale(full)
-			energy=ResizeImage(energy, self.energy_size)
-			(keypoints,descriptors)=self.extractor.doExtract(energy)
+            # fast: compress in-place
+            comp = [
+                "lz4"]  # ,"jpg-JPEG_QUALITYGOOD-JPEG_SUBSAMPLING_420-JPEG_OPTIMIZE" ,"jpg-JPEG_QUALITYGOOD-JPEG_SUBSAMPLING_420-JPEG_OPTIMIZE","jpg-JPEG_QUALITYGOOD-JPEG_SUBSAMPLING_420-JPEG_OPTIMIZE"]
+            dataset.compressDataset(comp, Array.fromNumPy(full, TargetDim=2, bShareMem=True))  # write zipped full
 
-			vs=self.width  / float(energy.shape[1])
-			if keypoints:
-				camera.keypoints.clear()
-				camera.keypoints.reserve(len(keypoints))
-				for keypoint in keypoints:
-					camera.keypoints.push_back(KeyPoint(vs*keypoint.pt[0], vs*keypoint.pt[1], keypoint.size, keypoint.angle, keypoint.response, keypoint.octave, keypoint.class_id))
-				camera.descriptors=Array.fromNumPy(descriptors,TargetDim=2) 
+            dataset_end = time.time()
 
-			self.saveKeyPoints(camera,keypoint_filename)
+            print(f"dataset write time in ms: {(dataset_end - dataset_start) * 1000}")
 
-			energy=cv2.cvtColor(energy, cv2.COLOR_GRAY2RGB)
-			for keypoint in keypoints:
-				cv2.drawMarker(energy, (int(keypoint.pt[0]), int(keypoint.pt[1])), (0, 255, 255), cv2.MARKER_CROSS, 5)
-			energy=cv2.flip(energy, 0)
-			energy=ConvertImageToUint8(energy)
+            convert_start = time.time()
 
-			print(f"convert time in ms: {(time.time() - convert_start) * 1000}")
+            energy = None
 
-			if False:
-				quad_box=camera.quad.getBoundingBox()
-				VS = self.energy_size / max(quad_box.size()[0],quad_box.size()[1])
-				T=Matrix.scale(2,VS) * camera.homography * Matrix.scale(2,vs)
-				quad_box=Quad(T,Quad(energy.shape[1],energy.shape[0])).getBoundingBox()
-				warped=cv2.warpPerspective(energy,  MatrixToNumPy(Matrix.translate(-quad_box.p1) * T),  (int(quad_box.size()[0]),int(quad_box.size()[1])))
-				energy=ComposeImage([warped,energy],1)
+            # if we're using micasense imagery, select the band specified by the user for extraction
+            if (isinstance(self.provider, ImageProviderRedEdge)):
+                print(f"Using band index {self.micasense_band} for extraction")
+                energy = full[:, :, self.micasense_band]
+            else:
+                energy = ConvertImageToGrayScale(full)
+            energy = ResizeImage(energy, self.energy_size)
+            (keypoints, descriptors) = self.extractor.doExtract(energy)
 
-			self.showEnergy(camera,energy)
-			
-		print("Done",camera.filenames[0],I,"of",len(self.cameras))
+            vs = self.width / float(energy.shape[1])
+            if keypoints:
+                camera.keypoints.clear()
+                camera.keypoints.reserve(len(keypoints))
+                for keypoint in keypoints:
+                    camera.keypoints.push_back(
+                        KeyPoint(vs * keypoint.pt[0], vs * keypoint.pt[1], keypoint.size, keypoint.angle,
+                                 keypoint.response, keypoint.octave, keypoint.class_id))
+                camera.descriptors = Array.fromNumPy(descriptors, TargetDim=2)
 
-	# convertToIdxAndExtractKeyPoints
-	def convertToIdxAndExtractKeyPoints(self):
+            self.saveKeyPoints(camera, keypoint_filename)
 
-		t1=Time.now()
+            energy = cv2.cvtColor(energy, cv2.COLOR_GRAY2RGB)
+            for keypoint in keypoints:
+                cv2.drawMarker(energy, (int(keypoint.pt[0]), int(keypoint.pt[1])), (0, 255, 255), cv2.MARKER_CROSS, 5)
+            energy = cv2.flip(energy, 0)
+            energy = ConvertImageToUint8(energy)
 
-		# convert to idx and find keypoints (don't use threads for IO ! it will slow down things)
-		# NOTE I'm disabling write-locks
-		self.startAction(len(self.cameras),"Converting idx and extracting keypoints...")
-		
-		for I,(img,camera) in enumerate(zip(self.images,self.cameras)):
-			self.convertAndExtract([I,(img,camera)])
-		
-		print("Conversion and feature extraction done in",t1.elapsedMsec(),"msec")
+            print(f"convert time in ms: {(time.time() - convert_start) * 1000}")
 
-	# findMatches
-	def findMatches(self,camera1,camera2):
+            if False:
+                quad_box = camera.quad.getBoundingBox()
+                VS = self.energy_size / max(quad_box.size()[0], quad_box.size()[1])
+                T = Matrix.scale(2, VS) * camera.homography * Matrix.scale(2, vs)
+                quad_box = Quad(T, Quad(energy.shape[1], energy.shape[0])).getBoundingBox()
+                warped = cv2.warpPerspective(energy, MatrixToNumPy(Matrix.translate(-quad_box.p1) * T),
+                                             (int(quad_box.size()[0]), int(quad_box.size()[1])))
+                energy = ComposeImage([warped, energy], 1)
 
-		if camera1.keypoints.empty() or camera2.keypoints.empty():
-			camera2.getEdge(camera1).setMatches([],"No keypoints")
-			return 0
+            self.showEnergy(camera, energy)
 
-		matches,H21,err=FindMatches(self.width,self.height,
-			camera1.id,[(k.x, k.y) for k in camera1.keypoints],Array.toNumPy(camera1.descriptors), 
-			camera2.id,[(k.x, k.y) for k in camera2.keypoints],Array.toNumPy(camera2.descriptors),
-			self.max_reproj_error * self.width, self.ratio_check)
+        print("Done", camera.filenames[0], I, "of", len(self.cameras))
 
-		if self.debug_mode and H21 is not None and len(matches)>0:
-			points1=[(k.x, k.y) for k in camera1.keypoints]
-			points2=[(k.x, k.y) for k in camera2.keypoints]
-			
-			A=Array.toNumPy(ArrayUtils.loadImage(self.cache_dir+"/energy/%04d.tif" % (camera1.id,)))
-			B=Array.toNumPy(ArrayUtils.loadImage(self.cache_dir+"/energy/%04d.tif" % (camera2.id,)))
-			A=cv2.cvtColor(A, cv2.COLOR_RGB2GRAY)
-			B=cv2.cvtColor(B, cv2.COLOR_RGB2GRAY)
-			
-			DebugMatches(self.cache_dir+"/debug_matches/%s/%04d.%04d.%d.png" %(err if err else "good",camera1.id,camera2.id,len(matches)), 
-				self.width, self.height, 
-				A, [points1[match.queryIdx] for match in matches], H21, 
-				B, [points2[match.trainIdx] for match in matches], numpy.identity(3,dtype='float32'))
+    # convertToIdxAndExtractKeyPoints
+    def convertToIdxAndExtractKeyPoints(self):
 
-		if err:
-			camera2.getEdge(camera1).setMatches([],err)
-			return 0
+        t1 = Time.now()
 
-		matches=[Match(match.queryIdx,match.trainIdx, match.imgIdx, match.distance) for match in matches]
-		camera2.getEdge(camera1).setMatches(matches,str(len(matches)))
-		return len(matches)
+        # convert to idx and find keypoints (don't use threads for IO ! it will slow down things)
+        # NOTE I'm disabling write-locks
+        self.startAction(len(self.cameras), "Converting idx and extracting keypoints...")
 
-	# findAllMatches
-	def findAllMatches(self,nthreads=8):
-		t1 = Time.now()
-		jobs=[]
-		for camera2 in self.cameras:
-			for camera1 in camera2.getAllLocalCameras():
-				if camera1.id < camera2.id:
-					jobs.append(lambda pair=(camera1,camera2): self.findMatches(pair[0],pair[1]))
-		self.startAction(len(jobs),"Finding all matches")
-		
-		if self.debug_mode:
-			num_matches=0
-			for I,job in enumerate(jobs): 
-				num_matches+=job()
-				self.advanceAction(I)
-		else:
-			results=RunJobsInParallel(jobs,advance_callback=lambda ndone: self.advanceAction(ndone))
-			num_matches=sum(results)
-		print("Found num_matches(", num_matches, ") matches in ", t1.elapsedMsec() ,"msec")
+        for I, (img, camera) in enumerate(zip(self.images, self.cameras)):
+            self.convertAndExtract([I, (img, camera)])
 
-	# generateImage
-	def generateImage(self,img):
-		t1=Time.now()
-		print("Generating image",img.filenames[0])	
-		ret = InterleaveChannels(self.provider.generateMultiImage(img))
-		print("done",img.id,"range",ComputeImageRange(ret),"shape",ret.shape, "dtype",ret.dtype,"in",t1.elapsedMsec(),"msec")
-		return ret
+        print("Conversion and feature extraction done in", t1.elapsedMsec(), "msec")
 
-	# run
-	def run(self):
+    # findMatches
+    def findMatches(self, camera1, camera2):
 
-		# if it's the first time, I need to find key point matches
-		if self.cameras[0].keypoints.size()==0:
-			self.convertToIdxAndExtractKeyPoints()
-			if self.do_bundle_adjustment:
-				print("Finding matches...")
-				self.findAllMatches()
-				print("removeDisconnectedCameras...")
-				self.removeDisconnectedCameras()
-				print("debugMatchesGraph...")
-				self.debugMatchesGraph()
+        if camera1.keypoints.empty() or camera2.keypoints.empty():
+            camera2.getEdge(camera1).setMatches([], "No keypoints")
+            return 0
 
-		if self.do_bundle_adjustment:
-			print("Doing bundle adjustment...")
-			tolerances=(10.0*self.ba_tolerance,1.0*self.ba_tolerance)
-			self.startAction(len(tolerances),"Refining solution...")
-			for I,tolerance in enumerate(tolerances):
-				self.advanceAction(I)
-				self.bundleAdjustment(tolerance)
-				self.removeOutlierMatches(self.max_reproj_error * self.width)
-				self.removeDisconnectedCameras()
-				self.removeCamerasWithTooMuchSkew()
-			self.endAction()
-		else:
-			print("Skipping bundle adjustment...")
+        matches, H21, err = FindMatches(self.width, self.height,
+                                        camera1.id, [(k.x, k.y) for k in camera1.keypoints],
+                                        Array.toNumPy(camera1.descriptors),
+                                        camera2.id, [(k.x, k.y) for k in camera2.keypoints],
+                                        Array.toNumPy(camera2.descriptors),
+                                        self.max_reproj_error * self.width, self.ratio_check)
 
-		self.saveMidx()
-		print("Finished")
+        if self.debug_mode and H21 is not None and len(matches) > 0:
+            points1 = [(k.x, k.y) for k in camera1.keypoints]
+            points2 = [(k.x, k.y) for k in camera2.keypoints]
 
+            A = Array.toNumPy(ArrayUtils.loadImage(self.cache_dir + "/energy/%04d.tif" % (camera1.id,)))
+            B = Array.toNumPy(ArrayUtils.loadImage(self.cache_dir + "/energy/%04d.tif" % (camera2.id,)))
+            A = cv2.cvtColor(A, cv2.COLOR_RGB2GRAY)
+            B = cv2.cvtColor(B, cv2.COLOR_RGB2GRAY)
 
-	# ////////////////////////////////////////////////
-	@staticmethod
-	def Run(remote_dir=None,image_dir=None, cache_dir=None,telemetry=None,plane=None,calibration=None,physic_box=None,batch=False, max_images=0,debug_mode=False):
-		
-		# since I'm writing data serially I can disable locks
-		os.environ["VISUS_DISABLE_WRITE_LOCK"]="1"
-		
-		if isinstance(calibration,str) and len(calibration):
-			f,cx,cy=[cdouble(it) for it in calibration.split()]
-			calibration=Calibration(f,cx,cy)
-		else:
-			calibration=None
-				
-		print("Running slam:")
-				
-		if not batch:
-			if not image_dir:
-				from PyQt5.QtWidgets import QFileDialog
-				image_dir = QFileDialog.getExistingDirectory(None, "Choose directory...","",QFileDialog.ShowDirsOnly) 			
-				
-		if not image_dir: 
-			print("Specify an image directory")
-			sys.exit(-1)
-			
-		# assign cache dir
-		if not cache_dir:
-			cache_dir=os.path.abspath(os.path.join(image_dir,"./VisusSlamFiles"))
-			
-		log_filename=cache_dir+"/~visusslam.log"
-		redirect_log=None
-		
-		gui=None
-		slam = Slam2D()
-			
-		if batch:
-			redirect_log=RedirectLog(log_filename)
-		else:
-			from . gui_utils import ShowSplash,HideSplash
-			from . slam_2d_gui import Slam2DWindow,GuiRedirectLog
-			ShowSplash()
-			gui=Slam2DWindow()
-			
-		slam.setImageDirectory(image_dir,  cache_dir= cache_dir, telemetry=cache_dir, plane=plane, calibration=calibration, physic_box=physic_box, max_images=max_images,debug_mode=debug_mode)
-			
-		if gui:
-			gui.run(slam)
-		else:
-			slam.run()
+            DebugMatches(self.cache_dir + "/debug_matches/%s/%04d.%04d.%d.png" % (
+            err if err else "good", camera1.id, camera2.id, len(matches)),
+                         self.width, self.height,
+                         A, [points1[match.queryIdx] for match in matches], H21,
+                         B, [points2[match.trainIdx] for match in matches], numpy.identity(3, dtype='float32'))
 
-	redirect_log=None	
+        if err:
+            camera2.getEdge(camera1).setMatches([], err)
+            return 0
+
+        matches = [Match(match.queryIdx, match.trainIdx, match.imgIdx, match.distance) for match in matches]
+        camera2.getEdge(camera1).setMatches(matches, str(len(matches)))
+        return len(matches)
+
+    # findAllMatches
+    def findAllMatches(self, nthreads=8):
+        t1 = Time.now()
+        jobs = []
+        for camera2 in self.cameras:
+            for camera1 in camera2.getAllLocalCameras():
+                if camera1.id < camera2.id:
+                    jobs.append(lambda pair=(camera1, camera2): self.findMatches(pair[0], pair[1]))
+        self.startAction(len(jobs), "Finding all matches")
+
+        if self.debug_mode:
+            num_matches = 0
+            for I, job in enumerate(jobs):
+                num_matches += job()
+                self.advanceAction(I)
+        else:
+            results = RunJobsInParallel(jobs, advance_callback=lambda ndone: self.advanceAction(ndone))
+            num_matches = sum(results)
+        print("Found num_matches(", num_matches, ") matches in ", t1.elapsedMsec(), "msec")
+
+    # generateImage
+    def generateImage(self, img):
+        t1 = Time.now()
+        print("Generating image", img.filenames[0])
+        ret = InterleaveChannels(self.provider.generateMultiImage(img))
+        print("done", img.id, "range", ComputeImageRange(ret), "shape", ret.shape, "dtype", ret.dtype, "in",
+              t1.elapsedMsec(), "msec")
+        return ret
+
+    # run
+    def run(self):
+
+        # if it's the first time, I need to find key point matches
+        if self.cameras[0].keypoints.size() == 0:
+            self.convertToIdxAndExtractKeyPoints()
+            if self.do_bundle_adjustment:
+                print("Finding matches...")
+                self.findAllMatches()
+                print("removeDisconnectedCameras...")
+                self.removeDisconnectedCameras()
+                print("debugMatchesGraph...")
+                self.debugMatchesGraph()
+
+        if self.do_bundle_adjustment:
+            print("Doing bundle adjustment...")
+            tolerances = (10.0 * self.ba_tolerance, 1.0 * self.ba_tolerance)
+            self.startAction(len(tolerances), "Refining solution...")
+            for I, tolerance in enumerate(tolerances):
+                self.advanceAction(I)
+                self.bundleAdjustment(tolerance)
+                self.removeOutlierMatches(self.max_reproj_error * self.width)
+                self.removeDisconnectedCameras()
+                self.removeCamerasWithTooMuchSkew()
+            self.endAction()
+        else:
+            print("Skipping bundle adjustment...")
+
+        self.saveMidx()
+        print("Finished")
+
+    # ////////////////////////////////////////////////
+    @staticmethod
+    def Run(remote_dir=None, image_dir=None, cache_dir=None, telemetry=None, plane=None, calibration=None,
+            physic_box=None, batch=False, max_images=0, debug_mode=False):
+
+        # since I'm writing data serially I can disable locks
+        os.environ["VISUS_DISABLE_WRITE_LOCK"] = "1"
+
+        if isinstance(calibration, str) and len(calibration):
+            f, cx, cy = [cdouble(it) for it in calibration.split()]
+            calibration = Calibration(f, cx, cy)
+        else:
+            calibration = None
+
+        print("Running slam:")
+
+        if not batch:
+            if not image_dir:
+                from PyQt5.QtWidgets import QFileDialog
+                image_dir = QFileDialog.getExistingDirectory(None, "Choose directory...", "", QFileDialog.ShowDirsOnly)
+
+        if not image_dir:
+            print("Specify an image directory")
+            sys.exit(-1)
+
+        # assign cache dir
+        if not cache_dir:
+            cache_dir = os.path.abspath(os.path.join(image_dir, "./VisusSlamFiles"))
+
+        log_filename = cache_dir + "/~visusslam.log"
+        redirect_log = None
+
+        gui = None
+        slam = Slam2D()
+
+        if batch:
+            redirect_log = RedirectLog(log_filename)
+        else:
+            from .gui_utils import ShowSplash, HideSplash
+            from .slam_2d_gui import Slam2DWindow, GuiRedirectLog
+            ShowSplash()
+            gui = Slam2DWindow()
+
+        slam.setImageDirectory(image_dir, cache_dir=cache_dir, telemetry=cache_dir, plane=plane,
+                               calibration=calibration, physic_box=physic_box, max_images=max_images,
+                               debug_mode=debug_mode)
+
+        if gui:
+            gui.run(slam)
+        else:
+            slam.run()
+
+    redirect_log = None
