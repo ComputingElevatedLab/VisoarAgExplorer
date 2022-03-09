@@ -7,19 +7,20 @@ from .image_provider_micasense import ImageProviderRedEdge
 from .image_provider_generic import ImageProviderGeneric
 
 
-def ComposeImage(v, axis):
-    H = [single.shape[0] for single in v]
-    W = [single.shape[1] for single in v]
-    W, H = [(sum(W), max(H)), (max(W), sum(H))][axis]
-    shape = list(v[0].shape)
-    shape[0], shape[1] = H, W
-    ret = numpy.zeros(shape=shape, dtype=v[0].dtype)
-    cur = [0, 0]
-    for single in v:
-        H, W = single.shape[0], single.shape[1]
-        ret[cur[1]:cur[1] + H, cur[0]:cur[0] + W, :] = single
-        cur[axis] += [W, H][axis]
-    return ret
+# Compose a new image from two provided components on a given axis.
+def ComposeImage(layers, axis):
+    h = [warped.shape[0] for warped in layers]
+    w = [energy.shape[1] for energy in layers]
+    w, h = [(sum(w), max(h)), (max(w), sum(h))][axis]
+    shape = list(layers[0].shape)
+    shape[0], shape[1] = h, w
+    image = numpy.zeros(shape=shape, dtype=layers[0].dtype)
+    current = [0, 0]
+    for single in layers:
+        h, w = single.shape[0], single.shape[1]
+        image[current[1]:current[1] + h, current[0]:current[0] + w, :] = single
+        current[axis] += [w, h][axis]
+    return image
 
 
 def SaveDatasetPreview(db_filename, img_filename, width=1024):
