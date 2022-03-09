@@ -235,10 +235,8 @@ class Slam2DIncremental(Slam):
             logic_centers.append((logic_x, logic_y))
 
         lines = [
-            f"<dataset typename='IdxMultipleDataset' logic_box='{int(logic_box.p1[0])} {int(logic_box.p2[0])} {int(logic_box.p1[1])} {int(logic_box.p2[1])}' physic_box='{physic_box.p1[0]} {physic_box.p2[0]} {physic_box.p1[1]} {physic_box.p2[1]}'>",
-            "",
-            f"<slam width='{self.width}' height='{self.height}' dtype='{self.dtype}' calibration='{self.calibration.f} {self.calibration.cx} {self.calibration.cy}' />",
-            ""
+            f"<dataset typename='IdxMultipleDataset' logic_box='{int(logic_box.p1[0])} {int(logic_box.p2[0])} {int(logic_box.p1[1])} {int(logic_box.p2[1])}' physic_box='{physic_box.p1[0]} {physic_box.p2[0]} {physic_box.p1[1]} {physic_box.p2[1]}'>\n",
+            f"<slam width='{self.width}' height='{self.height}' dtype='{self.dtype.toString()}' calibration='{self.calibration.f} {self.calibration.cx} {self.calibration.cy}' />\n",
         ]
 
         if isinstance(self.provider, ImageProviderRedEdge):
@@ -263,12 +261,10 @@ class Slam2DIncremental(Slam):
             w = int(1024)
             h = int(w * (logic_box.size()[1] / float(logic_box.size()[0])))
 
-            lines.append(
-                f"<svg width='{w}' height='{h}' viewBox='{int(logic_box.p1[0])} {int(logic_box.p1[1])} {int(logic_box.p2[0])} {int(logic_box.p2[1])}' >")
-
+            lines.append(f"<svg width='{w}' height='{h}' viewBox='{int(logic_box.p1[0])} {int(logic_box.p1[1])} {int(logic_box.p2[0])} {int(logic_box.p2[1])}' >")
             lines.append("<g stroke='#000000' stroke-width='1' fill='#ffff00' fill-opacity='0.3'>")
             for i, camera in enumerate(self.cameras):
-                lines.append(f"\t<poi point='{logic_centers[i][0]},{logic_centers[i][1]}' />")
+                lines.append(f"\t<poi point='{logic_centers[i][0]},{logic_centers[i][1]}'/>")
             lines.append("</g>")
             lines.append("<g fill-opacity='0.0' stroke-opacity='0.5' stroke-width='2'>")
             for camera in self.cameras:
@@ -283,7 +279,7 @@ class Slam2DIncremental(Slam):
             lat, lon = GPSUtils.localCartesianToGps(p.x, p.y, lat0, lon0)
             alt = p.z
             lines.append(
-                f"<dataset url='{camera.idx_filename}' color='{camera.color}' quad='{camera.quad}' filenames='{';'.join(camera.filenames)}' q='{camera.pose.q}' t='{camera.pose.t}' lat='{lat}' lon='{lon}' alt='{alt}' />")
+                f"<dataset url='{camera.idx_filename}' color='{camera.color.toString()}' quad='{camera.quad.toString()}' filenames='{';'.join(camera.filenames)}' q='{camera.pose.q.toString()}' t='{camera.pose.t.toString()}' lat='{lat}' lon='{lon}' alt='{alt}' />")
         lines.append("")
         lines.append("</translate>")
         lines.append("</scale>")
@@ -291,8 +287,8 @@ class Slam2DIncremental(Slam):
         lines.append("")
         lines.append("</dataset>")
 
-        SaveTextDocument(self.cache_dir + "/visus.midx", "\n".join(lines))
-        print("visus.midx saved")
+        SaveTextDocument(f"{self.cache_dir}/visus.midx", "\n".join(lines))
+        print("Saved visus.midx")
 
         SaveTextDocument(self.cache_dir + "/google.midx",
                          """
@@ -302,7 +298,7 @@ class Slam2DIncremental(Slam):
     <dataset name='visus'   url='./visus.midx' />
 </dataset>
 """)
-        print("google.midx saved")
+        print("Saved google.midx")
 
     def debugMatchesGraph(self):
 
