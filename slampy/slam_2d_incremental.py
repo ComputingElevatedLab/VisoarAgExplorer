@@ -34,6 +34,7 @@ class Slam2DIncremental(Slam):
         self.enable_svg = True
         self.enable_color_matching = False
         self.do_bundle_adjustment = True
+        self.num_converted = 0
 
         # Initialize the provider
         if provider_type == "lumenera":
@@ -312,11 +313,9 @@ class Slam2DIncremental(Slam):
         out = numpy.zeros((H, W, 4), dtype="uint8")
         out.fill(255)
 
-        def getImageCenter(camera):
-            p = camera.quad.centroid()
-            return (
-                int(0 + (p[0] - box.p1[0]) * (W / w)),
-                int(H - (p[1] - box.p1[1]) * (H / h)))
+        def getImageCenter(image):
+            p = image.quad.centroid()
+            return int(0 + (p[0] - box.p1[0]) * (W / w)), int(H - (p[1] - box.p1[1]) * (H / h))
 
         for bGoodMatches in [False, True]:
             for cameraI in self.cameras:
@@ -355,19 +354,13 @@ class Slam2DIncremental(Slam):
         out.fill(255)
 
         def toScreen(p):
-            return (
-                int(0 + (p[0] - box.p1[0]) * (W / w)),
-                int(H - (p[1] - box.p1[1]) * (H / h)))
+            return int(0 + (p[0] - box.p1[0]) * (W / w)), int(H - (p[1] - box.p1[1]) * (H / h))
 
         for camera2 in self.cameras:
-            color = (
-                int(255 * camera2.color.getRed()), int(255 * camera2.color.getGreen()),
-                int(255 * camera2.color.getBlue()),
-                255)
+            color = (int(255 * camera2.color.getRed()), int(255 * camera2.color.getGreen()), int(255 * camera2.color.getBlue()), 255)
             points = numpy.array([toScreen(it) for it in camera2.quad.points], dtype=numpy.int32)
             cv2.polylines(out, [points], True, color, 3)
-            cv2.putText(out, str(camera2.id), toScreen(camera2.quad.points[0]), cv2.FONT_HERSHEY_COMPLEX_SMALL, 1.0,
-                        color)
+            cv2.putText(out, str(camera2.id), toScreen(camera2.quad.points[0]), cv2.FONT_HERSHEY_COMPLEX_SMALL, 1.0, color)
 
         SaveImage(GuessUniqueFilename(self.cache_dir + "/~solution%d.png"), out)
 
@@ -467,8 +460,8 @@ class Slam2DIncremental(Slam):
         # convert to idx and find keypoints (don't use threads for IO ! it will slow down things)
         # NOTE I'm disabling write-locks
         self.startAction(len(self.cameras), "Converting idx and extracting keypoints...")
-        for i, (img, camera) in enumerate(zip(self.images, self.cameras)):
-            self.convertAndExtract([i, (img, camera)])
+        self.convertAndExtract([self.num_converted, (self.provider.images[-1], self.cameras[0])])
+        self.num_converted += 1
         stop = time.time()
         print(f"Conversion and feature extraction time: {(stop - start) * 1000} ms")
 
