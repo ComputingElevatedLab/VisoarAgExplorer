@@ -1,138 +1,23 @@
 from slampy.image_provider import *
 from slampy.image_utils import *
 
-from .image_provider_sequoia import ImageProviderSequoia
-from .image_provider_lumenera import ImageProviderLumenera
-from .image_provider_micasense import ImageProviderRedEdge
-from .image_provider_generic import ImageProviderGeneric
+from image_provider_sequoia import ImageProviderSequoia
+from image_provider_lumenera import ImageProviderLumenera
+from image_provider_micasense import ImageProviderRedEdge
+from image_provider_generic import ImageProviderGeneric
 
 
-# Compose a new image from two provided components on a given axis.
-def ComposeImage(layers, axis):
-    h = [warped.shape[0] for warped in layers]
-    w = [energy.shape[1] for energy in layers]
-    w, h = [(sum(w), max(h)), (max(w), sum(h))][axis]
-    shape = list(layers[0].shape)
-    shape[0], shape[1] = h, w
-    image = numpy.zeros(shape=shape, dtype=layers[0].dtype)
-    current = [0, 0]
-    for single in layers:
-        h, w = single.shape[0], single.shape[1]
-        image[current[1]:current[1] + h, current[0]:current[0] + w, :] = single
-        current[axis] += [w, h][axis]
-    return image
+# Perform 2D SLAM tasks incrementally
+class Slam2DIncremental(Slam):
 
-
-def SaveDatasetPreview(db_filename, img_filename, width=1024):
-    db = LoadDataset(db_filename)
-    maxh = db.getMaxResolution()
-    logic_box = db.getLogicBox()
-    logic_size = db.getLogicSize()
-    print("Dataset has logic box", logic_box, "logic size", logic_size)
-    height = int(width * (logic_size[1] / logic_size[0]))
-    deltah = int(math.log2((logic_size[0] / width) * (logic_size[1] / height)))
-    data = db.read(logic_box=logic_box, max_resolution=maxh - deltah)
-    SaveImage(img_filename, data)
-
-
-def FindImages(image_dir, max_images=0):
-    print("Finding images in", image_dir)
-    ret = []
-    for filename in glob.glob(os.path.join(image_dir, "**/*.*"), recursive=True):
-        if not os.path.splitext(filename)[1].lower() in (
-                '.jpg', '.png', '.tif', '.bmp'): continue  # look for extension, must be an image
-        if "~" in filename: continue  # skip temporary files
-        if "VisusSlamFiles" in filename: continue  # default is cache_dir is indie image_dir
-        print("Found image", len(ret), filename)
-        ret.append(filename)
-        if max_images and len(ret) >= max_images:
-            break
-
-    if not ret:
-        raise Exception("Cannot find any image")
-
-    return ret
-
-
-def GuessProvider(filename):
-    # I need to guess what model is the drone (I use the metadata for that. see all CreateImageProviderInstance methods)
-    # try with some images in the middle (more probability of taking the flight images)
-
-    reader = MetadataReader()
-    metadata = reader.readMetadata(filename)
-    reader.close()
-
-    print("Trying to create provider from metatada")
-    acc = []
-    for key, value in metadata.items():
-        print("\t", key, "=", value)
-        acc.append(str(value).lower())
-
-    exif_make = str(metadata["EXIF:Make"]).lower() if "EXIF:Make" in metadata else ""
-    exif_model = str(metadata["EXIF:Model"]).lower() if "EXIF:Model" in metadata else ""
-
-    if "sequoia" in exif_make or "sequoia" in exif_model:
-        print("Setting Sequoia provider")
-        return ImageProviderSequoia()
-
-    if "lumenera" in exif_model or "lumenera" in exif_make:
-        print("Setting Lumenera provider")
-        return ImageProviderLumenera()
-
-    if "rededge" in " ".join(acc) or "micasense" in " ".join(acc):
-        print("Setting micasense provider")
-        return ImageProviderRedEdge()
-
-    print("Setting generic provider")
-    return ImageProviderGeneric()
-
-
-class RedirectLog:
-
-    # constructor
-    def __init__(self, filename):
-        super().__init__()
-        os.makedirs(os.path.dirname(filename), exist_ok=True)
-        self.log = open(filename, 'w')
-        self.__stdout__ = sys.stdout
-        self.__stderr__ = sys.stderr
-        self.__excepthook__ = sys.excepthook
-        sys.stdout = self
-        sys.stderr = self
-        sys.excepthook = self.excepthook
-
-    # handler
-    def excepthook(self, exctype, value, traceback):
-        sys.stdout = self.__stdout__
-        sys.stderr = self.__stderr__
-        sys.excepthook = self.__excepthook__
-        sys.excepthook(exctype, value, traceback)
-
-    # write
-    def write(self, msg):
-        msg = msg.replace("\n", "\n" + str(datetime.datetime.now())[0:-7] + " ")
-        sys.__stdout__.write(msg)
-        sys.__stdout__.flush()
-        self.log.write(msg)
-
-    # flush
-    def flush(self):
-        sys.__stdout__.flush()
-        self.log.flush()
-
-
-class Slam2D(Slam):
-
-    # constructor
-    def __init__(self):
-        super(Slam2D, self).__init__()
+    def __init__(self, directory, provider_type):
+        super(Slam2DIncremental, self).__init__()
         self.width = 0
         self.height = 0
         self.dtype = DType()
         self.calibration = Calibration()
-        self.image_dir = ""
-        self.cache_dir = ""
-
+        self.image_dir = directory
+        self.cache_dir = os.path.join(directory, "VisusSlamFiles")
         self.debug_mode = False
         self.energy_size = 1280
         self.min_num_keypoints = 3000
@@ -142,66 +27,49 @@ class Slam2D(Slam):
         self.ratio_check = 0.8
         self.calibration.bFixed = False
         self.ba_tolerance = 0.005
-
         self.images = []
+        self.keyframes = []
         self.extractor = None
         self.extractor_method = None
-        # which band to use for extraction with micasense imagery
         self.micasense_band = 0
-
-        # you can override using a physic_box from another sequence
         self.physic_box = None
-
         self.enable_svg = True
         self.enable_color_matching = False
         self.do_bundle_adjustment = True
 
-    def setImageDirectory(self, image_dir, cache_dir=None, telemetry=None, plane=None, calibration=None,
-                          physic_box=None, max_images=0, debug_mode=False):
-
-        print("setImageDirectory")
-        print("\t", "image_dir", repr(image_dir))
-        print("\t", "cache_dir", repr(cache_dir))
-        print("\t", "telemetry", repr(telemetry))
-        print("\t", "plane", repr(plane))
-        print("\t", "calibration", (calibration.f, calibration.cx, calibration.cy) if calibration else None)
-        print("\t", "physic_box", physic_box.toString() if physic_box else None)
-        print("\t", "max_images", max_images)
-
-        self.debug_mode = debug_mode
-        self.image_dir = image_dir
-
-        images = FindImages(image_dir, max_images=max_images)
-
-        self.cache_dir = cache_dir
-        TryRemoveFiles(self.cache_dir + '/~*')
-        os.makedirs(self.cache_dir, exist_ok=True)
-
-        self.provider = GuessProvider(images[int(max(len(images) / 2 - 1, 0))])
-        self.provider.telemetry = telemetry
-        self.provider.plane = plane
+        # Initialize the provider
+        if provider_type == "lumenera":
+            self.provider = ImageProviderLumenera()
+        elif provider_type == "rededge":
+            self.provider = ImageProviderRedEdge()
+        elif provider_type == "sequoia":
+            self.provider = ImageProviderSequoia()
+        else:
+            self.provider = ImageProviderGeneric()
+        self.provider.skip_value = 1
+        self.provider.telemetry = None
+        self.provider.plane = None
         self.provider.image_dir = self.image_dir
         self.provider.cache_dir = self.cache_dir
-        self.provider.extractor_method = self.extractor_method
-        self.provider.calibration = calibration
-        self.provider.setImages(images)
+        self.provider.extractor_method = "akaze"
+        self.provider.calibration = None
 
+        # Not sure what this is needed for since provider also contains these properties
         array = Array.fromNumPy(self.generateImage(self.provider.images[0]), TargetDim=2)
         self.width = array.getWidth()
         self.height = array.getHeight()
-
+        self.depth = array.getDepth()
         self.dtype = array.dtype
         self.calibration = self.provider.calibration
-        self.physic_box = physic_box
+        self.physic_box = None
 
         for img in self.provider.images:
             camera = self.addCamera(img)
             self.createIdx(camera)
 
+        # Pure math and image manipulation, beyond me at the moment
         self.guessInitialPoses()
         self.refreshQuads()
-        self.saveMidx()
-
         self.guessLocalCameras()
         self.debugMatchesGraph()
         self.debugSolution()
@@ -264,24 +132,28 @@ class Slam2D(Slam):
                 subdiv.insert(center)
 
         cells, centers = subdiv.getVoronoiFacetList([])
-        assert (len(cells) == len(centers))
+        cells_len = len(cells)
+        assert (cells_len == len(centers))
 
         # find edges
         edges = dict()
-        for Cell in range(len(cells)):
+        for Cell in range(cells_len):
             cell = cells[Cell]
             center = (numpy.float32(centers[Cell][0]), numpy.float32(centers[Cell][1]))
 
             camera = find_camera[center]
 
-            for I in range(len(cell)):
-                pt0 = cell[(I + 0) % len(cell)]
-                pt1 = cell[(I + 1) % len(cell)]
+            for i in range(cells_len):
+
+                pt0 = cell[(i + 0) % cells_len]
+                pt1 = cell[(i + 1) % cells_len]
                 k0 = (pt0[0], pt0[1], pt1[0], pt1[1])
                 k1 = (pt1[0], pt1[1], pt0[0], pt0[1])
 
-                if not k0 in edges: edges[k0] = set()
-                if not k1 in edges: edges[k1] = set()
+                if k0 not in edges:
+                    edges[k0] = set()
+                if k1 not in edges:
+                    edges[k1] = set()
 
                 edges[k0].add(camera)
                 edges[k1].add(camera)
@@ -295,66 +167,58 @@ class Slam2D(Slam):
                     camera1.addLocalCamera(camera2)
 
         # insert prev and next
-        N = self.cameras.size()
-        for I in range(N):
-            camera2 = self.cameras[I]
+        n_cameras = self.cameras.size()
+        for i in range(n_cameras):
+            camera2 = self.cameras[i]
 
             # insert prev and next
-            if (I - 1) >= 0:
-                camera2.addLocalCamera(self.cameras[I - 1])
+            if (i - 1) >= 0:
+                camera2.addLocalCamera(self.cameras[i - 1])
 
-            if (I + 1) < N:
-                camera2.addLocalCamera(self.cameras[I + 1])
+            if (i + 1) < n_cameras:
+                camera2.addLocalCamera(self.cameras[i + 1])
 
-        # enlarge a little
-        if True:
+        new_local_cameras = {}
+        for cameraI in self.cameras:
+            new_local_cameras[cameraI] = set()
+            for cameraJ in cameraI.getAllLocalCameras():
+                # Heuristic to say: do not take cameras on the same drone flight "row"
+                prev = self.previousCamera(cameraJ)
+                next = self.nextCamera(cameraJ)
+                if prev != cameraI and next != cameraI:
+                    if prev:
+                        new_local_cameras[cameraI].add(prev)
+                    if next:
+                        new_local_cameras[cameraI].add(next)
 
-            new_local_cameras = {}
+        for cameraI in new_local_cameras:
+            for cameraJ in new_local_cameras[cameraI]:
+                cameraI.addLocalCamera(cameraJ)
 
-            for camera1 in self.cameras:
+        # Draw the image
+        w = float(box.size()[0])
+        h = float(box.size()[1])
 
-                new_local_cameras[camera1] = set()
+        W = int(4096)
+        H = int(h * (W / w))
+        out = numpy.zeros((H, W, 3), dtype="uint8")
+        out.fill(255)
 
-                for camera2 in camera1.getAllLocalCameras():
+        def toScreen(p):
+            return [int(0 + (p[0] - box.p1[0]) * (W / w)), int(H - (p[1] - box.p1[1]) * (H / h))]
 
-                    # euristic to say: do not take cameras on the same drone flight "row"
-                    prev2 = self.previousCamera(camera2)
-                    next2 = self.nextCamera(camera2)
-                    if prev2 != camera1 and next2 != camera1:
-                        if prev2: new_local_cameras[camera1].add(prev2)
-                        if next2: new_local_cameras[camera1].add(next2)
+        for i in range(len(cells)):
+            cell = cells[i]
+            center = (numpy.float32(centers[i][0]), numpy.float32(centers[i][1]))
+            camera2 = find_camera[center]
+            center = toScreen(center)
+            cell = numpy.array([toScreen(it) for it in cell], dtype=numpy.int32)
+            cv2.fillConvexPoly(out, cell, [random.randint(0, 255), random.randint(0, 255), random.randint(0, 255)])
+            cv2.polylines(out, [cell], True, [0, 0, 0], 3)
+            cv2.putText(out, str(camera2.id), (int(center[0]), int(center[1])), cv2.FONT_HERSHEY_COMPLEX_SMALL, 1.0,
+                        [0, 0, 0])
 
-            for camera1 in new_local_cameras:
-                for camera3 in new_local_cameras[camera1]:
-                    camera1.addLocalCamera(camera3)
-
-        # draw the image
-        if True:
-            w = float(box.size()[0])
-            h = float(box.size()[1])
-
-            W = int(4096)
-            H = int(h * (W / w))
-            out = numpy.zeros((H, W, 3), dtype="uint8")
-            out.fill(255)
-
-            def toScreen(p):
-                return [
-                    int(0 + (p[0] - box.p1[0]) * (W / w)),
-                    int(H - (p[1] - box.p1[1]) * (H / h))]
-
-            for I in range(len(cells)):
-                cell = cells[I]
-                center = (numpy.float32(centers[I][0]), numpy.float32(centers[I][1]))
-                camera2 = find_camera[center]
-                center = toScreen(center)
-                cell = numpy.array([toScreen(it) for it in cell], dtype=numpy.int32)
-                cv2.fillConvexPoly(out, cell, [random.randint(0, 255), random.randint(0, 255), random.randint(0, 255)])
-                cv2.polylines(out, [cell], True, [0, 0, 0], 3)
-                cv2.putText(out, str(camera2.id), (int(center[0]), int(center[1])), cv2.FONT_HERSHEY_COMPLEX_SMALL, 1.0,
-                            [0, 0, 0])
-
-            SaveImage(self.cache_dir + "/~local_cameras.png", out)
+        SaveImage(self.cache_dir + "/~local_cameras.png", out)
 
     def guessInitialPoses(self):
         lat0, lon0 = self.images[0].lat, self.images[0].lon
@@ -367,10 +231,8 @@ class Slam2D(Slam):
             camera.pose = Pose(q, world_center).inverse()
 
     def saveMidx(self):
-
         print("Saving midx")
         lat0, lon0 = self.images[0].lat, self.images[0].lon
-
         logic_box = self.getQuadsBox()
 
         # instead of working in range -180,+180 -90,+90 (worldwise ref frame) I normalize the range in [0,1]*[0,1]
@@ -379,10 +241,10 @@ class Slam2D(Slam):
         # NOTE: I can override the physic box by command line
         physic_box = self.physic_box
         if physic_box is not None:
-            print("Using physic_box forced by the user", physic_box.toString())
+            print("Using the user-provided physic_box", physic_box.toString())
         else:
             physic_box = BoxNd.invalid()
-            for I, camera in enumerate(self.cameras):
+            for camera in self.cameras:
                 quad = self.computeWorldQuad(camera)
                 for point in quad.points:
                     lat, lon = GPSUtils.localCartesianToGps(point.x, point.y, lat0, lon0)
@@ -390,9 +252,9 @@ class Slam2D(Slam):
                     physic_box.addPoint(PointNd(Point2d(alpha, beta)))
 
         logic_centers = []
-        for I, camera in enumerate(self.cameras):
+        for camera in self.cameras:
             p = camera.getWorldCenter()
-            lat, lon, alt = *GPSUtils.localCartesianToGps(p.x, p.y, lat0, lon0), p.z
+            lat, lon = GPSUtils.localCartesianToGps(p.x, p.y, lat0, lon0)
             alpha, beta = GPSUtils.gpsToUnit(lat, lon)
             alpha = (alpha - physic_box.p1[0]) / float(physic_box.size()[0])
             beta = (beta - physic_box.p1[1]) / float(physic_box.size()[1])
@@ -400,26 +262,17 @@ class Slam2D(Slam):
             logic_y = logic_box.p1[1] + beta * logic_box.size()[1]
             logic_centers.append((logic_x, logic_y))
 
-        lines = []
-
-        # this is the midx
-        lines.append("<dataset typename='IdxMultipleDataset' logic_box='%s %s %s %s' physic_box='%s %s %s %s'>" % (
-            cstring(int(logic_box.p1[0])), cstring(int(logic_box.p2[0])), cstring(int(logic_box.p1[1])),
-            cstring(int(logic_box.p2[1])),
-            cstring10(physic_box.p1[0]), cstring10(physic_box.p2[0]), cstring10(physic_box.p1[1]),
-            cstring10(physic_box.p2[1])))
-        lines.append("")
-
-        # dump some information about the slam
-        lines.append("<slam width='%s' height='%s' dtype='%s' calibration='%s %s %s' />" % (
-            cstring(self.width), cstring(self.height), self.dtype.toString(),
-            cstring(self.calibration.f), cstring(self.calibration.cx), cstring(self.calibration.cy)))
-        lines.append("")
+        lines = [
+            f"<dataset typename='IdxMultipleDataset' logic_box='{int(logic_box.p1[0])} {int(logic_box.p2[0])} {int(logic_box.p1[1])} {int(logic_box.p2[1])}' physic_box='{physic_box.p1[0]} {physic_box.p2[0]} {physic_box.p1[1]} {physic_box.p2[1]}'>",
+            "",
+            f"<slam width='{self.width}' height='{self.height}' dtype='{self.dtype}' calibration='{self.calibration.f} {self.calibration.cx} {self.calibration.cy}' />",
+            ""
+        ]
 
         if isinstance(self.provider, ImageProviderRedEdge):
             # if we're using a micasense camera, create a field for each band
-            for n in range(0, len(self.images[0].filenames)):
-                lines.append(f"<field name='band{n}'><code>output=voronoi()[{n}]</code></field>")
+            for i in range(len(self.images[0].filenames)):
+                lines.append(f"<field name='band{i}'><code>output=voronoi()[{i}]</code></field>")
 
         else:
             # this is the default field
@@ -428,52 +281,37 @@ class Slam2D(Slam):
         lines.append("")
 
         # how to go from logic_box (i.e. pixel) -> physic box ([0,1]*[0,1])
-        lines.append("<translate x='%s' y='%s'>" % (cstring10(physic_box.p1[0]), cstring10(physic_box.p1[1])))
-        lines.append("<scale     x='%s' y='%s'>" % (
-            cstring10(physic_box.size()[0] / logic_box.size()[0]),
-            cstring10(physic_box.size()[1] / logic_box.size()[1])))
-        lines.append("<translate x='%s' y='%s'>" % (cstring10(-logic_box.p1[0]), cstring10(-logic_box.p1[1])))
+        lines.append(f"<translate x='{physic_box.p1[0]}' y='{physic_box.p1[1]}'>")
+        lines.append(
+            f"<scale     x='{physic_box.size()[0] / logic_box.size()[0]}' y='{physic_box.size()[1] / logic_box.size()[1]}'>")
+        lines.append(f"<translate x='{-logic_box.p1[0]}' y='{-logic_box.p1[1]}'>")
         lines.append("")
 
         if self.enable_svg:
             w = int(1024)
             h = int(w * (logic_box.size()[1] / float(logic_box.size()[0])))
 
-            lines.append("<svg width='%s' height='%s' viewBox='%s %s %s %s' >" % (
-                cstring(w),
-                cstring(h),
-                cstring(int(logic_box.p1[0])),
-                cstring(int(logic_box.p1[1])),
-                cstring(int(logic_box.p2[0])),
-                cstring(int(logic_box.p2[1]))))
+            lines.append(
+                f"<svg width='{w}' height='{h}' viewBox='{int(logic_box.p1[0])} {int(logic_box.p1[1])} {int(logic_box.p2[0])} {int(logic_box.p2[1])}' >")
 
             lines.append("<g stroke='#000000' stroke-width='1' fill='#ffff00' fill-opacity='0.3'>")
-            for I, camera in enumerate(self.cameras):
-                lines.append("\t<poi point='%s,%s' />" % (cstring(logic_centers[I][0]), cstring(logic_centers[I][1])))
+            for i, camera in enumerate(self.cameras):
+                lines.append(f"\t<poi point='{logic_centers[i][0]},{logic_centers[i][1]}' />")
             lines.append("</g>")
-
             lines.append("<g fill-opacity='0.0' stroke-opacity='0.5' stroke-width='2'>")
-            for I, camera in enumerate(self.cameras):
-                lines.append("\t<polygon points='%s' stroke='%s' />" % (
-                    camera.quad.toString(",", " "), camera.color.toString()[0:7]))
+            for camera in self.cameras:
+                lines.append(
+                    f"\t<polygon points='{camera.quad.toString(',', ' ')}' stroke='{camera.color.toString()[0:7]}' />")
             lines.append("</g>")
-
             lines.append("</svg>")
             lines.append("")
 
         for camera in self.cameras:
             p = camera.getWorldCenter()
-            lat, lon, alt = *GPSUtils.localCartesianToGps(p.x, p.y, lat0, lon0), p.z
+            lat, lon = GPSUtils.localCartesianToGps(p.x, p.y, lat0, lon0)
+            alt = p.z
             lines.append(
-                "<dataset url='%s' color='%s' quad='%s' filenames='%s' q='%s' t='%s' lat='%s' lon='%s' alt='%s' />" % (
-                    camera.idx_filename,
-                    camera.color.toString(),
-                    camera.quad.toString(),
-                    ";".join(camera.filenames),
-                    camera.pose.q.toString(),
-                    camera.pose.t.toString(),
-                    cstring10(lat), cstring10(lon), cstring10(alt)))
-
+                f"<dataset url='{camera.idx_filename}' color='{camera.color}' quad='{camera.quad}' filenames='{';'.join(camera.filenames)}' q='{camera.pose.q}' t='{camera.pose.t}' lat='{lat}' lon='{lon}' alt='{alt}' />")
         lines.append("")
         lines.append("</translate>")
         lines.append("</scale>")
@@ -482,9 +320,8 @@ class Slam2D(Slam):
         lines.append("</dataset>")
 
         SaveTextDocument(self.cache_dir + "/visus.midx", "\n".join(lines))
-        print("Midx Saved")
+        print("visus.midx saved")
 
-        print("Saving google")
         SaveTextDocument(self.cache_dir + "/google.midx",
                          """
 <dataset name='slam' typename='IdxMultipleDataset'>
@@ -493,7 +330,7 @@ class Slam2D(Slam):
     <dataset name='visus'   url='./visus.midx' />
 </dataset>
 """)
-        print("Google Saved")
+        print("google.midx saved")
 
     def debugMatchesGraph(self):
 
@@ -588,53 +425,40 @@ class Slam2D(Slam):
         print(f"extraction time in ms: {(time.time() - extraction_start) * 1000}")
 
         # create idx and extract keypoints
-        keypoint_filename = self.cache_dir + "/keypoints/%04d" % (camera.id,)
-        idx_filename = self.cache_dir + "/" + camera.idx_filename
+        keypoint_filename = f"{self.cache_dir}/keypoints/{camera.id}"
+        idx_filename = f"{self.cache_dir}/{camera.idx_filename}"
 
-        if not self.debug_mode and self.loadKeyPoints(camera, keypoint_filename) and os.path.isfile(
-                idx_filename) and os.path.isfile(idx_filename.replace(".idx", ".bin")):
-            print("Keypoints already stored and idx generated", img.filenames[0])
-
+        if not self.debug_mode and self.loadKeyPoints(camera, keypoint_filename) and os.path.isfile(idx_filename) and os.path.isfile(idx_filename.replace(".idx", ".bin")):
+            print("Keypoints already stored and idx generated: ", img.filenames[0])
         else:
-
             generate_start = time.time()
-
             full = self.generateImage(img)
             Assert(isinstance(full, numpy.ndarray))
-
-            print(f"generate time in ms: {(time.time() - generate_start) * 1000}")
+            generate_stop = time.time()
+            print(f"Generate time: {(generate_stop - generate_start) * 1000} ms")
 
             # Match Histograms
             if self.enable_color_matching:
                 if color_matching_ref:
-                    print("doing color matching...")
+                    print("Doing color matching...")
                     MatchHistogram(full, color_matching_ref)
                 else:
                     color_matching_ref = full
 
             dataset_start = time.time()
-
-            dataset = LoadDataset(idx_filename)
-
+            data = LoadDataset(idx_filename)
             # slow: first write then compress
             # dataset.write(full)
             # dataset.compressDataset(["lz4"],Array.fromNumPy(full,TargetDim=2, bShareMem=True)) # write zipped full
-
             # fast: compress in-place
             # ,"jpg-JPEG_QUALITYGOOD-JPEG_SUBSAMPLING_420-JPEG_OPTIMIZE" ,"jpg-JPEG_QUALITYGOOD-JPEG_SUBSAMPLING_420-JPEG_OPTIMIZE","jpg-JPEG_QUALITYGOOD-JPEG_SUBSAMPLING_420-JPEG_OPTIMIZE"]
-
-            comp = ["lz4"]
             # write zipped full
-            dataset.compressDataset(comp, Array.fromNumPy(full, TargetDim=2, bShareMem=True))
-
-            dataset_end = time.time()
-
-            print(f"dataset write time in ms: {(dataset_end - dataset_start) * 1000}")
+            data.compressDataset(["lz4"], Array.fromNumPy(full, TargetDim=2, bShareMem=True))
+            dataset_stop = time.time()
+            print(f"Dataset write time: {(dataset_stop - dataset_start) * 1000} ms")
 
             convert_start = time.time()
-
             energy = None
-
             # if we're using micasense imagery, select the band specified by the user for extraction
             if isinstance(self.provider, ImageProviderRedEdge):
                 print(f"Using band index {self.micasense_band} for extraction")
@@ -661,10 +485,10 @@ class Slam2D(Slam):
                 cv2.drawMarker(energy, (int(keypoint.pt[0]), int(keypoint.pt[1])), (0, 255, 255), cv2.MARKER_CROSS, 5)
             energy = cv2.flip(energy, 0)
             energy = ConvertImageToUint8(energy)
+            convert_stop = time.time()
+            print(f"Convert time: {(convert_stop - convert_start) * 1000} ms")
 
-            print(f"convert time in ms: {(time.time() - convert_start) * 1000}")
-
-            # Uneachable code
+            # Unreachable code
             # if False:
             #     quad_box = camera.quad.getBoundingBox()
             #     VS = self.energy_size / max(quad_box.size()[0], quad_box.size()[1])
@@ -676,25 +500,19 @@ class Slam2D(Slam):
 
             self.showEnergy(camera, energy)
 
-        print("Done", camera.filenames[0], i, "of", len(self.cameras))
+        print(f"Done {camera.filenames[0]} {i} of {len(self.cameras)}")
 
-    # convertToIdxAndExtractKeyPoints
     def convertToIdxAndExtractKeyPoints(self):
-
-        t1 = Time.now()
-
+        start = time.time()
         # convert to idx and find keypoints (don't use threads for IO ! it will slow down things)
         # NOTE I'm disabling write-locks
         self.startAction(len(self.cameras), "Converting idx and extracting keypoints...")
-
         for i, (img, camera) in enumerate(zip(self.images, self.cameras)):
             self.convertAndExtract([i, (img, camera)])
+        stop = time.time()
+        print(f"Conversion and feature extraction time: {(stop - start) * 1000} ms")
 
-        print("Conversion and feature extraction done in", t1.elapsedMsec(), "msec")
-
-    # findMatches
     def findMatches(self, camera1, camera2):
-
         if camera1.keypoints.empty() or camera2.keypoints.empty():
             camera2.getEdge(camera1).setMatches([], "No keypoints")
             return 0
@@ -710,16 +528,21 @@ class Slam2D(Slam):
             points1 = [(k.x, k.y) for k in camera1.keypoints]
             points2 = [(k.x, k.y) for k in camera2.keypoints]
 
-            a = Array.toNumPy(ArrayUtils.loadImage(self.cache_dir + "/energy/%04d.tif" % (camera1.id,)))
-            b = Array.toNumPy(ArrayUtils.loadImage(self.cache_dir + "/energy/%04d.tif" % (camera2.id,)))
+            a = Array.toNumPy(ArrayUtils.loadImage(f"{self.cache_dir}/energy/{camera1.id}.tif"))
+            b = Array.toNumPy(ArrayUtils.loadImage(f"{self.cache_dir}/energy/{camera2.id}.tif"))
             a = cv2.cvtColor(a, cv2.COLOR_RGB2GRAY)
             b = cv2.cvtColor(b, cv2.COLOR_RGB2GRAY)
 
-            DebugMatches(self.cache_dir + "/debug_matches/%s/%04d.%04d.%d.png" % (
-                err if err else "good", camera1.id, camera2.id, len(matches)),
-                         self.width, self.height,
-                         a, [points1[match.queryIdx] for match in matches], H21,
-                         b, [points2[match.trainIdx] for match in matches], numpy.identity(3, dtype='float32'))
+            DebugMatches(f"{self.cache_dir}/debug_matches/{err if err else 'good'}/{camera1.id}.{camera2.id}.{len(matches)}.png",
+                         self.width,
+                         self.height,
+                         a,
+                         [points1[match.queryIdx] for match in matches],
+                         H21,
+                         b,
+                         [points2[match.trainIdx] for match in matches],
+                         numpy.identity(3, dtype='float32')
+                         )
 
         if err:
             camera2.getEdge(camera1).setMatches([], err)
@@ -730,7 +553,7 @@ class Slam2D(Slam):
         return len(matches)
 
     def findAllMatches(self):
-        t1 = Time.now()
+        start = time.time()
         jobs = []
         for camera2 in self.cameras:
             for camera1 in camera2.getAllLocalCameras():
@@ -746,92 +569,70 @@ class Slam2D(Slam):
         else:
             results = RunJobsInParallel(jobs, advance_callback=lambda ndone: self.advanceAction(ndone))
             num_matches = sum(results)
-        print("Found num_matches(", num_matches, ") matches in ", t1.elapsedMsec(), "msec")
+        stop = time.time()
+        print(f"Found {num_matches} matches in: {(stop - start) * 1000} ms")
 
     def generateImage(self, img):
-        t1 = Time.now()
+        start = time.time()
         print("Generating image", img.filenames[0])
-        ret = InterleaveChannels(self.provider.generateMultiImage(img))
-        print("done", img.id, "range", ComputeImageRange(ret), "shape", ret.shape, "dtype", ret.dtype, "in",
-              t1.elapsedMsec(), "msec")
-        return ret
+        image = InterleaveChannels(self.provider.generateMultiImage(img))
+        stop = time.time()
+        print(f"Done: {img.id}, range {ComputeImageRange(image)}, shape {image.shape}, dtype {image.dtype} in {(stop - start) * 1000}")
+        return image
 
-    # This is designed with batch processing in mind.
-    # def run(self):
-    #     # if it's the first time, I need to find key point matches
-    #     if self.cameras[0].keypoints.size() == 0:
-    #         self.convertToIdxAndExtractKeyPoints()
-    #         if self.do_bundle_adjustment:
-    #             print("Finding matches...")
-    #             self.findAllMatches()
-    #             print("removeDisconnectedCameras...")
-    #             self.removeDisconnectedCameras()
-    #             print("debugMatchesGraph...")
-    #             self.debugMatchesGraph()
-    #
-    #     if self.do_bundle_adjustment:
-    #         print("Doing bundle adjustment...")
-    #         tolerances = (10.0 * self.ba_tolerance, 1.0 * self.ba_tolerance)
-    #         self.startAction(len(tolerances), "Refining solution...")
-    #         for i, tolerance in enumerate(tolerances):
-    #             self.advanceAction(i)
-    #             self.bundleAdjustment(tolerance)
-    #             self.removeOutlierMatches(self.max_reproj_error * self.width)
-    #             self.removeDisconnectedCameras()
-    #             self.removeCamerasWithTooMuchSkew()
-    #         self.endAction()
-    #     else:
-    #         print("Skipping bundle adjustment...")
-    #
-    #     self.saveMidx()
-    #     print("Finished")
-    #
-    # @staticmethod
-    # def Run(image_dir=None, cache_dir=None, plane=None, calibration=None,
-    #         physic_box=None, batch=False, max_images=0, debug_mode=False):
-    #
-    #     if isinstance(calibration, str) and len(calibration):
-    #         f, cx, cy = [cdouble(it) for it in calibration.split()]
-    #         calibration = Calibration(f, cx, cy)
-    #     else:
-    #         calibration = None
-    #
-    #     print("Running slam:")
-    #
-    #     if not batch:
-    #         if not image_dir:
-    #             from PyQt5.QtWidgets import QFileDialog
-    #             image_dir = QFileDialog.getExistingDirectory(None, "Choose directory...", "", QFileDialog.ShowDirsOnly)
-    #
-    #     if not image_dir:
-    #         print("Specify an image directory")
-    #         sys.exit(-1)
-    #
-    #     # assign cache dir
-    #     if not cache_dir:
-    #         cache_dir = os.path.abspath(os.path.join(image_dir, "./VisusSlamFiles"))
-    #
-    #     log_filename = cache_dir + "/~visusslam.log"
-    #     redirect_log = None
-    #
-    #     gui = None
-    #     slam = Slam2D()
-    #
-    #     if batch:
-    #         redirect_log = RedirectLog(log_filename)
-    #     else:
-    #         from .gui_utils import ShowSplash, HideSplash
-    #         from .slam_2d_gui import Slam2DWindow, GuiRedirectLog
-    #         ShowSplash()
-    #         gui = Slam2DWindow()
-    #
-    #     slam.setImageDirectory(image_dir, cache_dir=cache_dir, telemetry=cache_dir, plane=plane,
-    #                            calibration=calibration, physic_box=physic_box, max_images=max_images,
-    #                            debug_mode=debug_mode)
-    #
-    #     if gui:
-    #         gui.run(slam)
-    #     else:
-    #         slam.run()
-    #
-    # redirect_log = None
+
+# Compose a new image from two provided components on a given axis.
+def ComposeImage(layers, axis):
+    h = [warped.shape[0] for warped in layers]
+    w = [energy.shape[1] for energy in layers]
+    w, h = [(sum(w), max(h)), (max(w), sum(h))][axis]
+    shape = list(layers[0].shape)
+    shape[0], shape[1] = h, w
+    image = numpy.zeros(shape=shape, dtype=layers[0].dtype)
+    current = [0, 0]
+    for single in layers:
+        h, w = single.shape[0], single.shape[1]
+        image[current[1]:current[1] + h, current[0]:current[0] + w, :] = single
+        current[axis] += [w, h][axis]
+    return image
+
+
+def SaveDatasetPreview(db_filename, img_filename, width=1024):
+    db = LoadDataset(db_filename)
+    maxh = db.getMaxResolution()
+    logic_box = db.getLogicBox()
+    logic_size = db.getLogicSize()
+    print(f"Dataset has logic box {logic_box}, logic size{logic_size}")
+    height = int(width * (logic_size[1] / logic_size[0]))
+    deltah = int(math.log2((logic_size[0] / width) * (logic_size[1] / height)))
+    data = db.read(logic_box=logic_box, max_resolution=(maxh - deltah))
+    SaveImage(img_filename, data)
+
+
+class RedirectLog:
+    def __init__(self, filename):
+        super().__init__()
+        os.makedirs(os.path.dirname(filename), exist_ok=True)
+        self.log = open(filename, 'w')
+        self.__stdout__ = sys.stdout
+        self.__stderr__ = sys.stderr
+        self.__excepthook__ = sys.excepthook
+        sys.stdout = self
+        sys.stderr = self
+        sys.excepthook = self.excepthook
+
+    def excepthook(self, exctype, value, traceback):
+        sys.stdout = self.__stdout__
+        sys.stderr = self.__stderr__
+        sys.excepthook = self.__excepthook__
+        sys.excepthook(exctype, value, traceback)
+
+    def write(self, msg):
+        msg = msg.replace(f"\n\n{datetime.datetime.now()[0:-7]} ")
+        sys.__stdout__.write(msg)
+        sys.__stdout__.flush()
+        self.log.write(msg)
+
+    def flush(self):
+        sys.__stdout__.flush()
+        self.log.flush()
