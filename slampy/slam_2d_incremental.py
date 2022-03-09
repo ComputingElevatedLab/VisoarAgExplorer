@@ -1,16 +1,14 @@
 from slampy.image_provider import *
+from slampy.image_provider_generic import ImageProviderGeneric
+from slampy.image_provider_lumenera import ImageProviderLumenera
+from slampy.image_provider_micasense import ImageProviderRedEdge
+from slampy.image_provider_sequoia import ImageProviderSequoia
 from slampy.image_utils import *
-
-from image_provider_sequoia import ImageProviderSequoia
-from image_provider_lumenera import ImageProviderLumenera
-from image_provider_micasense import ImageProviderRedEdge
-from image_provider_generic import ImageProviderGeneric
-
 
 # Perform 2D SLAM tasks incrementally
 class Slam2DIncremental(Slam):
 
-    def __init__(self, directory, provider_type):
+    def __init__(self, directory, provider_type, extractor):
         super(Slam2DIncremental, self).__init__()
         self.width = 0
         self.height = 0
@@ -30,7 +28,7 @@ class Slam2DIncremental(Slam):
         self.images = []
         self.keyframes = []
         self.extractor = None
-        self.extractor_method = None
+        self.extractor_method = extractor
         self.micasense_band = 0
         self.physic_box = None
         self.enable_svg = True
@@ -53,26 +51,6 @@ class Slam2DIncremental(Slam):
         self.provider.cache_dir = self.cache_dir
         self.provider.extractor_method = "akaze"
         self.provider.calibration = None
-
-        # Not sure what this is needed for since provider also contains these properties
-        array = Array.fromNumPy(self.generateImage(self.provider.images[0]), TargetDim=2)
-        self.width = array.getWidth()
-        self.height = array.getHeight()
-        self.depth = array.getDepth()
-        self.dtype = array.dtype
-        self.calibration = self.provider.calibration
-        self.physic_box = None
-
-        for img in self.provider.images:
-            camera = self.addCamera(img)
-            self.createIdx(camera)
-
-        # Pure math and image manipulation, beyond me at the moment
-        self.guessInitialPoses()
-        self.refreshQuads()
-        self.guessLocalCameras()
-        self.debugMatchesGraph()
-        self.debugSolution()
 
     def addCamera(self, img):
         self.images.append(img)
@@ -110,43 +88,37 @@ class Slam2DIncremental(Slam):
             SaveImage(self.cache_dir + "/energy/%04d.tif" % (camera.id,), energy)
 
     def guessLocalCameras(self):
-
         box = self.getQuadsBox()
-
         x1i = math.floor(box.p1[0])
         x2i = math.ceil(box.p2[0])
         y1i = math.floor(box.p1[1])
         y2i = math.ceil(box.p2[1])
         rect = (x1i, y1i, (x2i - x1i), (y2i - y1i))
-
         subdiv = cv2.Subdiv2D(rect)
-
         find_camera = dict()
         for camera in self.cameras:
             center = camera.quad.centroid()
             center = (numpy.float32(center.x), numpy.float32(center.y))
             if center in find_camera:
-                print("The following cameras seems to be in the same position: ", find_camera[center].id, camera.id)
+                # TODO: Figure out why we are getting here so many times
+                print(f"The following cameras seems to be in the same position: {find_camera[center].id} {camera.id}")
             else:
                 find_camera[center] = camera
                 subdiv.insert(center)
 
         cells, centers = subdiv.getVoronoiFacetList([])
-        cells_len = len(cells)
-        assert (cells_len == len(centers))
+        assert(len(cells) == len(centers))
 
-        # find edges
+        # Find edges
         edges = dict()
-        for Cell in range(cells_len):
-            cell = cells[Cell]
-            center = (numpy.float32(centers[Cell][0]), numpy.float32(centers[Cell][1]))
-
+        for i in range(len(cells)):
+            cell = cells[i]
+            center = (numpy.float32(centers[i][0]), numpy.float32(centers[i][1]))
             camera = find_camera[center]
 
-            for i in range(cells_len):
-
-                pt0 = cell[(i + 0) % cells_len]
-                pt1 = cell[(i + 1) % cells_len]
+            for j in range(len(cell)):
+                pt0 = cell[(j + 0) % len(cell)]
+                pt1 = cell[(j + 1) % len(cell)]
                 k0 = (pt0[0], pt0[1], pt1[0], pt1[1])
                 k1 = (pt1[0], pt1[1], pt0[0], pt0[1])
 
@@ -408,20 +380,14 @@ class Slam2DIncremental(Slam):
         self.debugMatchesGraph()
 
     def convertAndExtract(self, args):
-
         extraction_start = time.time()
-
         i, (img, camera) = args
-
         if not self.extractor:
-            self.extractor = ExtractKeyPoints(self.min_num_keypoints, self.max_num_keypoints, self.anms,
-                                              self.extractor_method)
-
+            self.extractor = ExtractKeyPoints(self.min_num_keypoints, self.max_num_keypoints, self.anms, self.extractor_method)
         if self.enable_color_matching:
             color_matching_ref = None
 
         self.advanceAction(i)
-
         print(f"extraction time in ms: {(time.time() - extraction_start) * 1000}")
 
         # create idx and extract keypoints
@@ -473,9 +439,7 @@ class Slam2DIncremental(Slam):
                 camera.keypoints.clear()
                 camera.keypoints.reserve(len(keypoints))
                 for keypoint in keypoints:
-                    camera.keypoints.push_back(
-                        KeyPoint(vs * keypoint.pt[0], vs * keypoint.pt[1], keypoint.size, keypoint.angle,
-                                 keypoint.response, keypoint.octave, keypoint.class_id))
+                    camera.keypoints.push_back(KeyPoint(vs * keypoint.pt[0], vs * keypoint.pt[1], keypoint.size, keypoint.angle, keypoint.response, keypoint.octave, keypoint.class_id))
                 camera.descriptors = Array.fromNumPy(descriptors, TargetDim=2)
 
             self.saveKeyPoints(camera, keypoint_filename)
