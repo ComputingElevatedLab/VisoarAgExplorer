@@ -125,12 +125,12 @@ class Slam2DIncremental(Slam):
         super().addCamera(camera)
 
     def createIdx(self, camera):
-        camera.idx_filename = "./idx/{:04d}.idx".format(camera.id)
+        camera.idx_filename = f"./idx/{camera.id:04d}.idx"
         field = Field("myfield", self.dtype)
         field.default_layout = "row_major"
         CreateIdx(url=os.path.join(self.cache_dir, camera.idx_filename),
                   dim=2,
-                  filename_template="./{:04d}.bin".format(camera.id),
+                  filename_template=f"./{camera.id:04d}.bin",
                   blocksperfile=-1,
                   fields=[field],
                   dims=(self.width, self.height))
@@ -271,20 +271,7 @@ class Slam2DIncremental(Slam):
 
     def initMidx(self):
         camera = self.cameras[-1]
-        self.lat0, self.lon0 = self.images[0].lat, self.images[0].lon
-        # instead of working in range -180,+180 -90,+90 (worldwide ref frame) I normalize the range in [0,1]*[0,1]
-        # physic box is in the range [0,1]*[0,1]
-        # logic_box is in pixel coordinates
-        # NOTE: I can override the physic box by command line
-        if self.physic_box is not None:
-            print("Using the user-provided physic_box", self.physic_box.toString())
-        else:
-            self.physic_box = BoxNd.invalid()
-            quad = self.computeWorldQuad(camera)
-            for point in quad.points:
-                lat, lon = GPSUtils.localCartesianToGps(point.x, point.y, self.lat0, self.lon0)
-                alpha, beta = GPSUtils.gpsToUnit(lat, lon)
-                self.physic_box.addPoint(PointNd(Point2d(alpha, beta)))
+
 
         p = camera.getWorldCenter()
         lat, lon = GPSUtils.localCartesianToGps(p.x, p.y, self.lat0, self.lon0)
@@ -339,42 +326,90 @@ class Slam2DIncremental(Slam):
         self.midx_footer.append("</dataset>")
 
     def addToMidx(self):
-        if len(self.midx_header) == 0:
-            self.initMidx()
+        self.midx_header.clear()
+        self.midx_poi.clear()
+        self.midx_polygon.clear()
+        self.midx_data.clear()
+        self.midx_footer.clear()
+
+        lat0, lon0 = self.images[0].lat, self.images[0].lon
+        # instead of working in range -180,+180 -90,+90 (worldwide ref frame) I normalize the range in [0,1]*[0,1]
+        # physic box is in the range [0,1]*[0,1]
+        # logic_box is in pixel coordinates
+        # NOTE: I can override the physic box by command line
+        physic_box = self.physic_box
+        if physic_box is not None:
+            print("Using the user-provided physic_box", self.physic_box.toString())
         else:
-            quad = self.computeWorldQuad(self.cameras[-1])
-            for point in quad.points:
-                lat, lon = GPSUtils.localCartesianToGps(point.x, point.y, self.lat0, self.lon0)
-                alpha, beta = GPSUtils.gpsToUnit(lat, lon)
-                self.physic_box.addPoint(PointNd(Point2d(alpha, beta)))
-
-            logic_centers = []
-            for i, camera in enumerate(self.cameras):
-                p = camera.getWorldCenter()
-                lat, lon = GPSUtils.localCartesianToGps(p.x, p.y, self.lat0, self.lon0)
-                alpha, beta = GPSUtils.gpsToUnit(lat, lon)
-                alpha = (alpha - self.physic_box.p1[0]) / float(self.physic_box.size()[0])
-                beta = (beta - self.physic_box.p1[1]) / float(self.physic_box.size()[1])
-                logic_box = self.getQuadsBox()
-                logic_x = logic_box.p1[0] + alpha * logic_box.size()[0]
-                logic_y = logic_box.p1[1] + beta * logic_box.size()[1]
-                logic_centers.append((logic_x, logic_y))
-
-            if self.enable_svg:
-                self.midx_poi.clear()
-                for i in range(len(self.cameras)):
-                    self.midx_poi.append(f"\t<poi point='{logic_centers[i][0]},{logic_centers[i][1]}'/>")
-                self.midx_poi.append("</g>")
-                self.midx_polygon.append(f"\t<polygon points='{self.cameras[-1].quad.toString(',', ' ')}' stroke='{self.cameras[-1].color.toString()[0:7]}' />")
-
-            self.midx_data.clear()
-            self.midx_data.append("</g>")
-            self.midx_data.append("</svg>")
-            self.midx_data.append("")
+            physic_box = BoxNd.invalid()
             for camera in self.cameras:
-                p = camera.getWorldCenter()
-                lat, lon = GPSUtils.localCartesianToGps(p.x, p.y, self.lat0, self.lon0)
-                self.midx_data.append(f"<dataset url='{camera.idx_filename}' color='{camera.color.toString()}' quad='{camera.quad.toString()}' filenames='{';'.join(camera.filenames)}' q='{camera.pose.q.toString()}' t='{camera.pose.t.toString()}' lat='{lat}' lon='{lon}' alt='{p.z}' />")
+                quad = self.computeWorldQuad(camera)
+                for point in quad.points:
+                    lat, lon = GPSUtils.localCartesianToGps(point.x, point.y, lat0, lon0)
+                    alpha, beta = GPSUtils.gpsToUnit(lat, lon)
+                    physic_box.addPoint(PointNd(Point2d(alpha, beta)))
+
+        logic_centers = []
+        for camera in self.cameras:
+            p = camera.getWorldCenter()
+            lat, lon = GPSUtils.localCartesianToGps(p.x, p.y, lat0, lon0)
+            alpha, beta = GPSUtils.gpsToUnit(lat, lon)
+            alpha = (alpha - physic_box.p1[0]) / float(physic_box.size()[0])
+            beta = (beta - physic_box.p1[1]) / float(physic_box.size()[1])
+            logic_box = self.getQuadsBox()
+            logic_x = logic_box.p1[0] + alpha * logic_box.size()[0]
+            logic_y = logic_box.p1[1] + beta * logic_box.size()[1]
+            logic_centers.append((logic_x, logic_y))
+
+        logic_box_str = f"logic_box='{int(logic_box.p1[0])} {int(logic_box.p2[0])} {int(logic_box.p1[1])} {int(logic_box.p2[1])}'"
+        physic_box_str = f"physic_box='{physic_box.p1[0]} {physic_box.p2[0]} {physic_box.p1[1]} {physic_box.p2[1]}'"
+        self.midx_header.append(f"<dataset typename='IdxMultipleDataset' {logic_box_str} {physic_box_str}>\n")
+        calibration_str = f"calibration='{self.calibration.f} {self.calibration.cx} {self.calibration.cy}'"
+        self.midx_header.append(f"<slam width='{self.width}' height='{self.height}' dtype='{self.dtype.toString()}' {calibration_str} />\n")
+
+        if isinstance(self.provider, ImageProviderRedEdge):
+            # if we're using a micasense camera, create a field for each band
+            for i in range(len(self.images[0].filenames)):
+                self.midx_header.append(f"<field name='band{i}'><code>output=voronoi()[{i}]</code></field>")
+        else:
+            # this is the default field
+            self.midx_header.append("<field name='blend'><code>output=voronoi()</code></field>")
+
+        # how to go from logic_box (i.e. pixel) -> physic box ([0,1]*[0,1])
+        self.midx_header.append("")
+        self.midx_header.append(f"<translate x='{physic_box.p1[0]}' y='{physic_box.p1[1]}'>")
+        self.midx_header.append(f"<scale     x='{physic_box.size()[0] / logic_box.size()[0]}' y='{physic_box.size()[1] / logic_box.size()[1]}'>")
+        self.midx_header.append(f"<translate x='{-logic_box.p1[0]}' y='{-logic_box.p1[1]}'>")
+        self.midx_header.append("")
+
+        if self.enable_svg:
+            w = int(1024)
+            h = int(w * (logic_box.size()[1] / float(logic_box.size()[0])))
+            self.midx_header.append(
+                f"<svg width='{w}' height='{h}' viewBox='{int(logic_box.p1[0])} {int(logic_box.p1[1])} {int(logic_box.p2[0])} {int(logic_box.p2[1])}' >")
+            self.midx_header.append("<g stroke='#000000' stroke-width='1' fill='#ffff00' fill-opacity='0.3'>")
+            for i in range(len(self.cameras)):
+                self.midx_poi.append(f"\t<poi point='{logic_centers[i][0]},{logic_centers[i][1]}'/>")
+            self.midx_poi.append("</g>")
+            self.midx_polygon.append("<g fill-opacity='0.0' stroke-opacity='0.5' stroke-width='2'>")
+            for camera in self.cameras:
+                self.midx_polygon.append(f"\t<polygon points='{camera.quad.toString(',', ' ')}' stroke='{camera.color.toString()[0:7]}' />")
+
+        self.midx_data.append("</g>")
+        self.midx_data.append("</svg>")
+        self.midx_data.append("")
+
+        for camera in self.cameras:
+            p = camera.getWorldCenter()
+            lat, lon = GPSUtils.localCartesianToGps(p.x, p.y, lat0, lon0)
+            self.midx_data.append(f"<dataset url='{camera.idx_filename}' color='{camera.color.toString()}' quad='{camera.quad.toString()}' filenames='{';'.join(camera.filenames)}' q='{camera.pose.q.toString()}' t='{camera.pose.t.toString()}' lat='{lat}' lon='{lon}' alt='{p.z}' />")
+
+        self.midx_footer.append("")
+        self.midx_footer.append("</translate>")
+        self.midx_footer.append("</scale>")
+        self.midx_footer.append("</translate>")
+        self.midx_footer.append("")
+        self.midx_footer.append("</dataset>")
 
     def saveMidx(self):
         lines = self.midx_header + self.midx_poi + self.midx_polygon + self.midx_data + self.midx_footer
@@ -460,10 +495,10 @@ class Slam2DIncremental(Slam):
         print(f"extraction time in ms: {(time.time() - extraction_start) * 1000}")
 
         # create idx and extract keypoints
-        keypoint_filename = f"{self.cache_dir}/keypoints/{camera.id}"
-        idx_filename = f"{self.cache_dir}/{camera.idx_filename}"
+        keypoint_path = f"{self.cache_dir}/keypoints/{camera.id}"
+        idx_path = f"{self.cache_dir}/{camera.idx_filename}"
 
-        if not self.debug_mode and self.loadKeyPoints(camera, keypoint_filename) and os.path.isfile(idx_filename) and os.path.isfile(idx_filename.replace(".idx", ".bin")):
+        if not self.debug_mode and self.loadKeyPoints(camera, keypoint_path) and os.path.isfile(idx_path) and os.path.isfile(idx_path.replace(".idx", ".bin")):
             print("Keypoints already stored and idx generated: ", img.filenames[0])
         else:
             generate_start = time.time()
@@ -483,7 +518,7 @@ class Slam2DIncremental(Slam):
             self.advanceAction(i)
 
             dataset_start = time.time()
-            data = LoadDataset(idx_filename)
+            data = LoadDataset(idx_path)
             # slow: first write then compress
             # dataset.write(full)
             # dataset.compressDataset(["lz4"],Array.fromNumPy(full,TargetDim=2, bShareMem=True)) # write zipped full
@@ -513,7 +548,7 @@ class Slam2DIncremental(Slam):
                     camera.keypoints.push_back(KeyPoint(vs * keypoint.pt[0], vs * keypoint.pt[1], keypoint.size, keypoint.angle, keypoint.response, keypoint.octave, keypoint.class_id))
                 camera.descriptors = Array.fromNumPy(descriptors, TargetDim=2)
 
-            self.saveKeyPoints(camera, keypoint_filename)
+            self.saveKeyPoints(camera, keypoint_path)
 
             energy = cv2.cvtColor(energy, cv2.COLOR_GRAY2RGB)
             for keypoint in keypoints:
