@@ -139,7 +139,6 @@ class ImageProvider:
 				img.metadata=reader.readMetadata(filename)
 
 			self.advanceAction(I)
-			time.sleep(0.00001)
 
 		self.endAction()
 		print("Finished")	

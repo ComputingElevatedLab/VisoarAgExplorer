@@ -583,11 +583,6 @@ class Slam2D(Slam):
 
 		SaveImage(GuessUniqueFilename(self.cache_dir+"/~solution%d.png"), out)
 
-	# doPostIterationAction
-	def doPostIterationAction(self):
-		self.debugSolution()
-		self.debugMatchesGraph()
-
 	# convertAndExtract
 	def convertAndExtract(self,args):
 

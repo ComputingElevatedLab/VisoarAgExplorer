@@ -137,21 +137,9 @@ class Slam2DIncremental(Slam):
 
     def bundle(self):
         tolerances = (10.0 * self.ba_tolerance, 1.0 * self.ba_tolerance)
-        for i, tolerance in enumerate(tolerances):
-            self.advanceAction(i)
+        for tolerance in tolerances:
             self.bundleAdjustment(tolerance)
             self.removeOutlierMatches(self.max_reproj_error * self.width)
-        self.endAction()
-
-    def startAction(self, N, message):
-        print("Starting action", N, message, "...")
-
-    def advanceAction(self, I):
-        # print("Advance action",I)
-        pass
-
-    def endAction(self):
-        print("End action")
 
     def showEnergy(self, camera, energy):
         if self.debug_mode:
@@ -257,7 +245,7 @@ class Slam2DIncremental(Slam):
             cv2.polylines(out, [cell], True, [0, 0, 0], 3)
             cv2.putText(out, str(camera2.id), (int(center[0]), int(center[1])), cv2.FONT_HERSHEY_COMPLEX_SMALL, 1.0, [0, 0, 0])
 
-        SaveImage(self.cache_dir + "/~local_cameras.png", out)
+        #SaveImage(self.cache_dir + "/~local_cameras.png", out)
 
     def guessInitialPose(self):
         lat0, lon0 = self.images[0].lat, self.images[0].lon
@@ -481,10 +469,6 @@ class Slam2DIncremental(Slam):
 
         SaveImage(GuessUniqueFilename(self.cache_dir + "/~solution%d.png"), out)
 
-    def doPostIterationAction(self):
-        self.debugSolution()
-        self.debugMatchesGraph()
-
     def convertAndExtract(self, args):
         extraction_start = time.time()
         i, (img, camera) = args
@@ -514,8 +498,6 @@ class Slam2DIncremental(Slam):
                     MatchHistogram(full, color_matching_ref)
                 else:
                     color_matching_ref = full
-
-            self.advanceAction(i)
 
             dataset_start = time.time()
             data = LoadDataset(idx_path)
@@ -576,7 +558,7 @@ class Slam2DIncremental(Slam):
         start = time.time()
         # convert to idx and find keypoints (don't use threads for IO ! it will slow down things)
         # NOTE I'm disabling write-locks
-        self.startAction(len(self.cameras), "Converting idx and extracting keypoints...")
+        print("Converting idx and extracting keypoints...")
         for i, (img, camera) in enumerate(zip(self.images, self.cameras)):
             self.convertAndExtract([i, (img, camera)])
         stop = time.time()
@@ -625,19 +607,18 @@ class Slam2DIncremental(Slam):
     def findAllMatches(self):
         start = time.time()
         jobs = []
-        for camera2 in self.cameras:
-            for camera1 in camera2.getAllLocalCameras():
-                if camera1.id < camera2.id:
-                    jobs.append(lambda pair=(camera1, camera2): self.findMatches(pair[0], pair[1]))
-        self.startAction(len(jobs), "Finding all matches")
+        camera = self.cameras[-1]
+        for local_camera in camera.getAllLocalCameras():
+            if local_camera.id < camera.id:
+                jobs.append(lambda pair=(local_camera, camera): self.findMatches(pair[0], pair[1]))
+        print(len(jobs), "Finding all matches")
 
+        num_matches = 0
         if self.debug_mode:
-            num_matches = 0
             for i, job in enumerate(jobs):
                 num_matches += job()
-                self.advanceAction(i)
-        else:
-            results = RunJobsInParallel(jobs, advance_callback=lambda ndone: self.advanceAction(ndone))
+        elif len(jobs) > 0:
+            results = RunJobsInParallel(jobs)
             num_matches = sum(results)
         stop = time.time()
         print(f"Found {num_matches} matches in: {(stop - start) * 1000} ms")
