@@ -41,6 +41,7 @@ class Slam2DIncremental(Slam):
         self.enable_color_matching = False
         self.do_bundle_adjustment = True
         self.num_converted = 0
+        self.minimum_images = False
 
         self.lat0 = None
         self.lon0 = None
