@@ -8,6 +8,7 @@ from slampy.image_provider_micasense import ImageProviderRedEdge
 from slampy.image_provider_sequoia import ImageProviderSequoia
 from slampy.image_utils import *
 
+
 # Perform 2D SLAM tasks incrementally
 class Slam2DIncremental(Slam):
 
@@ -20,6 +21,7 @@ class Slam2DIncremental(Slam):
         self.calibration = Calibration()
         self.image_dir = directory
         self.cache_dir = os.path.join(directory, "VisusSlamFiles")
+        self.empty_keypoint_path = f"{self.cache_dir}/keypoints/empty"
         TryRemoveFiles(f"{self.cache_dir}/~*")
         os.makedirs(self.cache_dir, exist_ok=True)
         self.debug_mode = False
@@ -41,7 +43,6 @@ class Slam2DIncremental(Slam):
         self.enable_color_matching = False
         self.do_bundle_adjustment = True
         self.num_converted = 0
-        self.minimum_images = False
 
         self.lat0 = None
         self.lon0 = None
@@ -93,10 +94,10 @@ class Slam2DIncremental(Slam):
             self.calibration = self.provider.calibration
             self.physic_box = None
 
+        # TODO: Figure out how to avoid all of the following repeated work
         self.provider.loadMetadata()
         self.provider.loadSensorCfg()
 
-        self.provider.findPanels()
         self.provider.loadLatLonAltFromMetadata()
         self.provider.loadYawFromMetadata()
 
@@ -140,7 +141,6 @@ class Slam2DIncremental(Slam):
         tolerances = (10.0 * self.ba_tolerance, 1.0 * self.ba_tolerance)
         for tolerance in tolerances:
             self.bundleAdjustment(tolerance)
-            self.removeOutlierMatches(self.max_reproj_error * self.width)
 
     def showEnergy(self, camera, energy):
         if self.debug_mode:
@@ -158,13 +158,14 @@ class Slam2DIncremental(Slam):
         center = self.cameras[-1].quad.centroid()
         center = (numpy.float32(center.x), numpy.float32(center.y))
         if center in find_camera:
-            print(f"The following cameras seems to be in the same position: {find_camera[center].id} {self.cameras[-1].id}")
+            print(
+                f"The following cameras seems to be in the same position: {find_camera[center].id} {self.cameras[-1].id}")
         else:
             find_camera[center] = self.cameras[-1]
             subdiv.insert(center)
 
         cells, centers = subdiv.getVoronoiFacetList([])
-        assert(len(cells) == len(centers))
+        assert (len(cells) == len(centers))
 
         # Find edges
         edges = dict()
@@ -244,9 +245,10 @@ class Slam2DIncremental(Slam):
             cell = numpy.array([toScreen(it) for it in cell], dtype=numpy.int32)
             cv2.fillConvexPoly(out, cell, [random.randint(0, 255), random.randint(0, 255), random.randint(0, 255)])
             cv2.polylines(out, [cell], True, [0, 0, 0], 3)
-            cv2.putText(out, str(camera2.id), (int(center[0]), int(center[1])), cv2.FONT_HERSHEY_COMPLEX_SMALL, 1.0, [0, 0, 0])
+            cv2.putText(out, str(camera2.id), (int(center[0]), int(center[1])), cv2.FONT_HERSHEY_COMPLEX_SMALL, 1.0,
+                        [0, 0, 0])
 
-        #SaveImage(self.cache_dir + "/~local_cameras.png", out)
+        # SaveImage(self.cache_dir + "/~local_cameras.png", out)
 
     def guessInitialPose(self):
         lat0, lon0 = self.images[0].lat, self.images[0].lon
@@ -260,7 +262,6 @@ class Slam2DIncremental(Slam):
 
     def initMidx(self):
         camera = self.cameras[-1]
-
 
         p = camera.getWorldCenter()
         lat, lon = GPSUtils.localCartesianToGps(p.x, p.y, self.lat0, self.lon0)
@@ -276,7 +277,8 @@ class Slam2DIncremental(Slam):
         physic_box_str = f"physic_box='{self.physic_box.p1[0]} {self.physic_box.p2[0]} {self.physic_box.p1[1]} {self.physic_box.p2[1]}'"
         self.midx_header.append(f"<dataset typename='IdxMultipleDataset' {logic_box_str} {physic_box_str}>\n")
         calibration_str = f"calibration='{self.calibration.f} {self.calibration.cx} {self.calibration.cy}'"
-        self.midx_header.append(f"<slam width='{self.width}' height='{self.height}' dtype='{self.dtype.toString()}' {calibration_str} />\n")
+        self.midx_header.append(
+            f"<slam width='{self.width}' height='{self.height}' dtype='{self.dtype.toString()}' {calibration_str} />\n")
 
         if isinstance(self.provider, ImageProviderRedEdge):
             # if we're using a micasense camera, create a field for each band
@@ -289,23 +291,27 @@ class Slam2DIncremental(Slam):
         # how to go from logic_box (i.e. pixel) -> physic box ([0,1]*[0,1])
         self.midx_header.append("")
         self.midx_header.append(f"<translate x='{self.physic_box.p1[0]}' y='{self.physic_box.p1[1]}'>")
-        self.midx_header.append(f"<scale     x='{self.physic_box.size()[0] / logic_box.size()[0]}' y='{self.physic_box.size()[1] / logic_box.size()[1]}'>")
+        self.midx_header.append(
+            f"<scale     x='{self.physic_box.size()[0] / logic_box.size()[0]}' y='{self.physic_box.size()[1] / logic_box.size()[1]}'>")
         self.midx_header.append(f"<translate x='{-logic_box.p1[0]}' y='{-logic_box.p1[1]}'>")
         self.midx_header.append("")
 
         if self.enable_svg:
             w = int(1024)
             h = int(w * (logic_box.size()[1] / float(logic_box.size()[0])))
-            self.midx_header.append(f"<svg width='{w}' height='{h}' viewBox='{int(logic_box.p1[0])} {int(logic_box.p1[1])} {int(logic_box.p2[0])} {int(logic_box.p2[1])}' >")
+            self.midx_header.append(
+                f"<svg width='{w}' height='{h}' viewBox='{int(logic_box.p1[0])} {int(logic_box.p1[1])} {int(logic_box.p2[0])} {int(logic_box.p2[1])}' >")
             self.midx_header.append("<g stroke='#000000' stroke-width='1' fill='#ffff00' fill-opacity='0.3'>")
             self.midx_poi.append(f"\t<poi point='{logic_centers[0][0]},{logic_centers[0][1]}'/>")
             self.midx_poi.append("</g>")
             self.midx_polygon.append("<g fill-opacity='0.0' stroke-opacity='0.5' stroke-width='2'>")
-            self.midx_polygon.append(f"\t<polygon points='{camera.quad.toString(',', ' ')}' stroke='{camera.color.toString()[0:7]}' />")
+            self.midx_polygon.append(
+                f"\t<polygon points='{camera.quad.toString(',', ' ')}' stroke='{camera.color.toString()[0:7]}' />")
 
         p = camera.getWorldCenter()
         lat, lon = GPSUtils.localCartesianToGps(p.x, p.y, self.lat0, self.lon0)
-        self.midx_data.append(f"<dataset url='{camera.idx_filename}' color='{camera.color.toString()}' quad='{camera.quad.toString()}' filenames='{';'.join(camera.filenames)}' q='{camera.pose.q.toString()}' t='{camera.pose.t.toString()}' lat='{lat}' lon='{lon}' alt='{p.z}' />")
+        self.midx_data.append(
+            f"<dataset url='{camera.idx_filename}' color='{camera.color.toString()}' quad='{camera.quad.toString()}' filenames='{';'.join(camera.filenames)}' q='{camera.pose.q.toString()}' t='{camera.pose.t.toString()}' lat='{lat}' lon='{lon}' alt='{p.z}' />")
 
         self.midx_footer.append("")
         self.midx_footer.append("</translate>")
@@ -354,7 +360,8 @@ class Slam2DIncremental(Slam):
         physic_box_str = f"physic_box='{physic_box.p1[0]} {physic_box.p2[0]} {physic_box.p1[1]} {physic_box.p2[1]}'"
         self.midx_header.append(f"<dataset typename='IdxMultipleDataset' {logic_box_str} {physic_box_str}>\n")
         calibration_str = f"calibration='{self.calibration.f} {self.calibration.cx} {self.calibration.cy}'"
-        self.midx_header.append(f"<slam width='{self.width}' height='{self.height}' dtype='{self.dtype.toString()}' {calibration_str} />\n")
+        self.midx_header.append(
+            f"<slam width='{self.width}' height='{self.height}' dtype='{self.dtype.toString()}' {calibration_str} />\n")
 
         if isinstance(self.provider, ImageProviderRedEdge):
             # if we're using a micasense camera, create a field for each band
@@ -367,7 +374,8 @@ class Slam2DIncremental(Slam):
         # how to go from logic_box (i.e. pixel) -> physic box ([0,1]*[0,1])
         self.midx_header.append("")
         self.midx_header.append(f"<translate x='{physic_box.p1[0]}' y='{physic_box.p1[1]}'>")
-        self.midx_header.append(f"<scale     x='{physic_box.size()[0] / logic_box.size()[0]}' y='{physic_box.size()[1] / logic_box.size()[1]}'>")
+        self.midx_header.append(
+            f"<scale     x='{physic_box.size()[0] / logic_box.size()[0]}' y='{physic_box.size()[1] / logic_box.size()[1]}'>")
         self.midx_header.append(f"<translate x='{-logic_box.p1[0]}' y='{-logic_box.p1[1]}'>")
         self.midx_header.append("")
 
@@ -382,7 +390,8 @@ class Slam2DIncremental(Slam):
             self.midx_poi.append("</g>")
             self.midx_polygon.append("<g fill-opacity='0.0' stroke-opacity='0.5' stroke-width='2'>")
             for camera in self.cameras:
-                self.midx_polygon.append(f"\t<polygon points='{camera.quad.toString(',', ' ')}' stroke='{camera.color.toString()[0:7]}' />")
+                self.midx_polygon.append(
+                    f"\t<polygon points='{camera.quad.toString(',', ' ')}' stroke='{camera.color.toString()[0:7]}' />")
 
         self.midx_data.append("</g>")
         self.midx_data.append("</svg>")
@@ -391,7 +400,8 @@ class Slam2DIncremental(Slam):
         for camera in self.cameras:
             p = camera.getWorldCenter()
             lat, lon = GPSUtils.localCartesianToGps(p.x, p.y, lat0, lon0)
-            self.midx_data.append(f"<dataset url='{camera.idx_filename}' color='{camera.color.toString()}' quad='{camera.quad.toString()}' filenames='{';'.join(camera.filenames)}' q='{camera.pose.q.toString()}' t='{camera.pose.t.toString()}' lat='{lat}' lon='{lon}' alt='{p.z}' />")
+            self.midx_data.append(
+                f"<dataset url='{camera.idx_filename}' color='{camera.color.toString()}' quad='{camera.quad.toString()}' filenames='{';'.join(camera.filenames)}' q='{camera.pose.q.toString()}' t='{camera.pose.t.toString()}' lat='{lat}' lon='{lon}' alt='{p.z}' />")
 
         self.midx_footer.append("")
         self.midx_footer.append("</translate>")
@@ -463,18 +473,21 @@ class Slam2DIncremental(Slam):
             return int(0 + (p[0] - box.p1[0]) * (W / w)), int(H - (p[1] - box.p1[1]) * (H / h))
 
         for camera in self.cameras:
-            color = (int(255 * camera.color.getRed()), int(255 * camera.color.getGreen()), int(255 * camera.color.getBlue()), 255)
+            color = (
+            int(255 * camera.color.getRed()), int(255 * camera.color.getGreen()), int(255 * camera.color.getBlue()),
+            255)
             points = numpy.array([toScreen(it) for it in camera.quad.points], dtype=numpy.int32)
             cv2.polylines(out, [points], True, color, 3)
-            cv2.putText(out, str(camera.id), toScreen(camera.quad.points[0]), cv2.FONT_HERSHEY_COMPLEX_SMALL, 1.0, color)
+            cv2.putText(out, str(camera.id), toScreen(camera.quad.points[0]), cv2.FONT_HERSHEY_COMPLEX_SMALL, 1.0,
+                        color)
 
         SaveImage(GuessUniqueFilename(self.cache_dir + "/~solution%d.png"), out)
 
-    def convertAndExtract(self, args):
+    def convertAndExtract(self, img, camera):
         extraction_start = time.time()
-        i, (img, camera) = args
         if not self.extractor:
-            self.extractor = ExtractKeyPoints(self.min_num_keypoints, self.max_num_keypoints, self.anms, self.extractor_method)
+            self.extractor = ExtractKeyPoints(self.min_num_keypoints, self.max_num_keypoints, self.anms,
+                                              self.extractor_method)
         if self.enable_color_matching:
             color_matching_ref = None
         print(f"extraction time in ms: {(time.time() - extraction_start) * 1000}")
@@ -483,7 +496,8 @@ class Slam2DIncremental(Slam):
         keypoint_path = f"{self.cache_dir}/keypoints/{camera.id}"
         idx_path = f"{self.cache_dir}/{camera.idx_filename}"
 
-        if not self.debug_mode and self.loadKeyPoints(camera, keypoint_path) and os.path.isfile(idx_path) and os.path.isfile(idx_path.replace(".idx", ".bin")):
+        if not self.debug_mode and self.loadKeyPoints(camera, keypoint_path) and os.path.isfile(
+                idx_path) and os.path.isfile(idx_path.replace(".idx", ".bin")):
             print("Keypoints already stored and idx generated: ", img.filenames[0])
         else:
             generate_start = time.time()
@@ -503,12 +517,12 @@ class Slam2DIncremental(Slam):
             dataset_start = time.time()
             data = LoadDataset(idx_path)
             # slow: first write then compress
-            # dataset.write(full)
+            data.write(full)
             # dataset.compressDataset(["lz4"],Array.fromNumPy(full,TargetDim=2, bShareMem=True)) # write zipped full
             # fast: compress in-place
             # ,"jpg-JPEG_QUALITYGOOD-JPEG_SUBSAMPLING_420-JPEG_OPTIMIZE" ,"jpg-JPEG_QUALITYGOOD-JPEG_SUBSAMPLING_420-JPEG_OPTIMIZE","jpg-JPEG_QUALITYGOOD-JPEG_SUBSAMPLING_420-JPEG_OPTIMIZE"]
             # write zipped full
-            data.compressDataset(["lz4"], Array.fromNumPy(full, TargetDim=2, bShareMem=True))
+            #data.compressDataset(["lz4"], Array.fromNumPy(full, TargetDim=2, bShareMem=True))
             dataset_stop = time.time()
             print(f"Dataset write time: {(dataset_stop - dataset_start) * 1000} ms")
 
@@ -528,7 +542,8 @@ class Slam2DIncremental(Slam):
                 camera.keypoints.clear()
                 camera.keypoints.reserve(len(keypoints))
                 for keypoint in keypoints:
-                    camera.keypoints.push_back(KeyPoint(vs * keypoint.pt[0], vs * keypoint.pt[1], keypoint.size, keypoint.angle, keypoint.response, keypoint.octave, keypoint.class_id))
+                    kp = KeyPoint(vs * keypoint.pt[0], vs * keypoint.pt[1], keypoint.size, keypoint.angle, keypoint.response, keypoint.octave, keypoint.class_id)
+                    camera.keypoints.push_back(kp)
                 camera.descriptors = Array.fromNumPy(descriptors, TargetDim=2)
 
             self.saveKeyPoints(camera, keypoint_path)
@@ -560,8 +575,7 @@ class Slam2DIncremental(Slam):
         # convert to idx and find keypoints (don't use threads for IO ! it will slow down things)
         # NOTE I'm disabling write-locks
         print("Converting idx and extracting keypoints...")
-        for i, (img, camera) in enumerate(zip(self.images, self.cameras)):
-            self.convertAndExtract([i, (img, camera)])
+        self.convertAndExtract(self.images[-1], self.cameras[-1])
         stop = time.time()
         print(f"Conversion and feature extraction time: {(stop - start) * 1000} ms")
 
@@ -586,16 +600,17 @@ class Slam2DIncremental(Slam):
             a = cv2.cvtColor(a, cv2.COLOR_RGB2GRAY)
             b = cv2.cvtColor(b, cv2.COLOR_RGB2GRAY)
 
-            DebugMatches(f"{self.cache_dir}/debug_matches/{err if err else 'good'}/{camera1.id}.{camera2.id}.{len(matches)}.png",
-                         self.width,
-                         self.height,
-                         a,
-                         [points1[match.queryIdx] for match in matches],
-                         H21,
-                         b,
-                         [points2[match.trainIdx] for match in matches],
-                         numpy.identity(3, dtype='float32')
-                         )
+            DebugMatches(
+                f"{self.cache_dir}/debug_matches/{err if err else 'good'}/{camera1.id}.{camera2.id}.{len(matches)}.png",
+                self.width,
+                self.height,
+                a,
+                [points1[match.queryIdx] for match in matches],
+                H21,
+                b,
+                [points2[match.trainIdx] for match in matches],
+                numpy.identity(3, dtype='float32')
+                )
 
         if err:
             camera2.getEdge(camera1).setMatches([], err)
@@ -609,9 +624,8 @@ class Slam2DIncremental(Slam):
         start = time.time()
         jobs = []
         camera = self.cameras[-1]
-        for local_camera in camera.getAllLocalCameras():
-            if local_camera.id < camera.id:
-                jobs.append(lambda pair=(local_camera, camera): self.findMatches(pair[0], pair[1]))
+        previous_camera = self.cameras[-2]
+        jobs.append(lambda pair=(previous_camera, camera): self.findMatches(pair[0], pair[1]))
         print(len(jobs), "Finding all matches")
 
         num_matches = 0
@@ -629,8 +643,13 @@ class Slam2DIncremental(Slam):
         print("Generating image", img.filenames[0])
         image = InterleaveChannels(self.provider.generateMultiImage(img))
         stop = time.time()
-        print(f"Done: {img.id}, range {ComputeImageRange(image)}, shape {image.shape}, dtype {image.dtype} in {(stop - start) * 1000}")
+        print(
+            f"Done: {img.id}, range {ComputeImageRange(image)}, shape {image.shape}, dtype {image.dtype} in {(stop - start) * 1000}")
         return image
+
+    def createEmptyKeypointFile(self):
+        self.saveKeyPoints(Camera(), self.empty_keypoint_path)
+
 
 # Compose a new image from two provided components on a given axis.
 def ComposeImage(layers, axis):
