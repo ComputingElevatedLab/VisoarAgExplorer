@@ -89,15 +89,22 @@ class ImageProviderRedEdge(ImageProvider):
 	# generateMultiImage
 	def generateMultiImage(self,img):
 		capture = micasense.capture.Capture.from_filelist(img.filenames)
-		# note I'm ignoring distotions here
+		capture_warp_matrices = capture.get_warp_matrices()
+		# note I'm ignoring distortions here
 		# capture.images[I].undistorted(capture.images[I].reflectance())
+
+		# really important- we need to perform these steps first.
+		# if we manipulate the image before we align it, the bands will 
+		# become misaligned and we'll get worse issues downstream
 		multi = capture.reflectance(self.panel_irradiance)
 		multi = [single.astype('float32') for single in multi]
+		multi = self.alignImage(multi, capture_warp_matrices)
+
+		# now that our image is aligned, we can manipulate all the bands together
 		multi = self.mirrorY(multi)
 		multi = self.swapRedAndBlue(multi)
 		multi = self.undistortImage(multi)
 
-		multi = self.alignImage(multi, capture)
 
 		multi=[single for single in multi if single.shape==multi[0].shape]
 		return multi

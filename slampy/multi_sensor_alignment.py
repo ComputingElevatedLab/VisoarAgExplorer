@@ -165,17 +165,18 @@ class MultiSensorAlignment:
 					InterleaveChannels([self.warpPerspective(multi[I], I),self.warpPerspective(multi[J], J)]))	
 
 	# doAlign
-	def doAlign(self,  multi, capture = None):
+	def doAlign(self,  multi, capture_warp_matrices = None):
 		
-		if capture is None:
+		if capture_warp_matrices is None:
 			return [
 					self.warpPerspective(multi[C], C)
 					for C in range(len(multi))
 			]
 		else:
-			# if capture is not None, it's a micasense imagee
+			# if capture_warp_matrices exist, this is a micasense imagee
 			# we'll want to use the special micasense warp matrices
-			capture_warp_matrices = capture.get_warp_matrices()
+
+			# capture_warp_matrices[0],capture_warp_matrices[2]=capture_warp_matrices[2],capture_warp_matrices[0]
 
 			return [
 					self.warpPerspective(multi[C], C, capture_warp_matrices) 
