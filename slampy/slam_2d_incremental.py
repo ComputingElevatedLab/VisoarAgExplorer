@@ -43,6 +43,7 @@ class Slam2DIncremental(Slam):
         self.enable_color_matching = False
         self.do_bundle_adjustment = True
         self.num_converted = 0
+        self.all_keypoint_vectors = []
 
         self.lat0 = None
         self.lon0 = None
@@ -136,6 +137,27 @@ class Slam2DIncremental(Slam):
                   blocksperfile=-1,
                   fields=[field],
                   dims=(self.width, self.height))
+
+    def setBaKeypointVectors(self):
+        camera1 = self.cameras[-2]
+        camera1.keypoints = self.all_keypoint_vectors[-2]
+        camera2 = self.cameras[-1]
+        camera2.keypoints = self.all_keypoint_vectors[-1]
+
+    def setAllKeypointVectors(self):
+        for i, camera in enumerate(self.cameras):
+            camera.keypoints = self.all_keypoint_vectors[i]
+
+    def resetKeypointVectors(self):
+        for i in range(len(self.cameras)):
+            camera = self.cameras[i]
+            if len(camera.keypoints) > 0:
+                vector = VectorOfKeyPoint()
+                vector.reserve(len(camera.keypoints))
+                for keypoint in camera.keypoints:
+                    vector.push_back(keypoint)
+                self.all_keypoint_vectors[i] = vector
+                camera.keypoints = VectorOfKeyPoint()
 
     def bundle(self):
         tolerances = (10.0 * self.ba_tolerance, 1.0 * self.ba_tolerance)
@@ -538,13 +560,19 @@ class Slam2DIncremental(Slam):
             (keypoints, descriptors) = self.extractor.doExtract(energy)
 
             vs = self.width / float(energy.shape[1])
-            if keypoints:
-                camera.keypoints.clear()
-                camera.keypoints.reserve(len(keypoints))
-                for keypoint in keypoints:
-                    kp = KeyPoint(vs * keypoint.pt[0], vs * keypoint.pt[1], keypoint.size, keypoint.angle, keypoint.response, keypoint.octave, keypoint.class_id)
-                    camera.keypoints.push_back(kp)
-                camera.descriptors = Array.fromNumPy(descriptors, TargetDim=2)
+
+            vector = VectorOfKeyPoint()
+            vector.reserve(len(keypoints))
+            for keypoint in keypoints:
+                kp = KeyPoint(vs * keypoint.pt[0], vs * keypoint.pt[1], keypoint.size, keypoint.angle, keypoint.response, keypoint.octave, keypoint.class_id)
+                vector.push_back(kp)
+                # camera.keypoints.clear()
+                # camera.keypoints.reserve(len(keypoints))
+                # for keypoint in keypoints:
+                #     kp = KeyPoint(vs * keypoint.pt[0], vs * keypoint.pt[1], keypoint.size, keypoint.angle, keypoint.response, keypoint.octave, keypoint.class_id)
+                #     camera.keypoints.push_back(kp)
+            self.all_keypoint_vectors.append(vector)
+            camera.descriptors = Array.fromNumPy(descriptors, TargetDim=2)
 
             self.saveKeyPoints(camera, keypoint_path)
 
