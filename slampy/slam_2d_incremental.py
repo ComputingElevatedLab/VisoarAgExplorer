@@ -1,6 +1,7 @@
 import os.path
 
 from math import isnan
+from shapely.geometry import Polygon
 from slampy.image_provider import *
 from slampy.image_provider_generic import ImageProviderGeneric
 from slampy.image_provider_lumenera import ImageProviderLumenera
@@ -21,7 +22,6 @@ class Slam2DIncremental(Slam):
         self.calibration = Calibration()
         self.image_dir = directory
         self.cache_dir = os.path.join(directory, "VisusSlamFiles")
-        self.empty_keypoint_path = f"{self.cache_dir}/keypoints/empty"
         TryRemoveFiles(f"{self.cache_dir}/~*")
         os.makedirs(self.cache_dir, exist_ok=True)
         self.debug_mode = False
@@ -44,6 +44,7 @@ class Slam2DIncremental(Slam):
         self.do_bundle_adjustment = True
         self.num_converted = 0
         self.all_keypoint_vectors = []
+        self.all_polygons = []
 
         self.lat0 = None
         self.lon0 = None
@@ -138,11 +139,28 @@ class Slam2DIncremental(Slam):
                   fields=[field],
                   dims=(self.width, self.height))
 
-    def setBaKeypointVectors(self):
-        camera1 = self.cameras[-2]
-        camera1.keypoints = self.all_keypoint_vectors[-2]
-        camera2 = self.cameras[-1]
-        camera2.keypoints = self.all_keypoint_vectors[-1]
+    def generatePolygon(self):
+        points = []
+        for point in self.cameras[-1].quad.points:
+            points.append((point.x, point.y))
+        self.all_polygons.append(Polygon(points))
+
+    def getTrivialBaIndices(self):
+        return [len(self.cameras) - 2, len(self.cameras) - 1]
+
+    def getIntersectionBasedBaIndices(self):
+        indices = []
+        current_polygon = self.all_polygons[-1]
+        for i, other_polygon in enumerate(self.all_polygons[:-1]):
+            if current_polygon.intersects(other_polygon):
+                indices.append(i)
+        indices.append(len(self.all_polygons) - 1)
+        return indices
+
+    def setBaKeypointVectors(self, indices):
+        for index in indices:
+            camera = self.cameras[index]
+            camera.keypoints = self.all_keypoint_vectors[index]
 
     def setAllKeypointVectors(self):
         for i, camera in enumerate(self.cameras):
@@ -396,8 +414,7 @@ class Slam2DIncremental(Slam):
         # how to go from logic_box (i.e. pixel) -> physic box ([0,1]*[0,1])
         self.midx_header.append("")
         self.midx_header.append(f"<translate x='{physic_box.p1[0]}' y='{physic_box.p1[1]}'>")
-        self.midx_header.append(
-            f"<scale     x='{physic_box.size()[0] / logic_box.size()[0]}' y='{physic_box.size()[1] / logic_box.size()[1]}'>")
+        self.midx_header.append(f"<scale     x='{physic_box.size()[0] / logic_box.size()[0]}' y='{physic_box.size()[1] / logic_box.size()[1]}'>")
         self.midx_header.append(f"<translate x='{-logic_box.p1[0]}' y='{-logic_box.p1[1]}'>")
         self.midx_header.append("")
 
@@ -648,12 +665,13 @@ class Slam2DIncremental(Slam):
         camera2.getEdge(camera1).setMatches(matches, str(len(matches)))
         return len(matches)
 
-    def findAllMatches(self):
+    def findAllMatches(self, indices):
         start = time.time()
         jobs = []
         camera = self.cameras[-1]
-        previous_camera = self.cameras[-2]
-        jobs.append(lambda pair=(previous_camera, camera): self.findMatches(pair[0], pair[1]))
+        for index in indices[:-1]:
+            other_camera = self.cameras[index]
+            jobs.append(lambda pair=(other_camera, camera): self.findMatches(pair[0], pair[1]))
         print(len(jobs), "Finding all matches")
 
         num_matches = 0
