@@ -44,6 +44,7 @@ class Slam2DIncremental(Slam):
         self.do_bundle_adjustment = True
         self.num_converted = 0
         self.all_keypoint_vectors = []
+        self.all_centers = []
         self.all_polygons = []
 
         self.lat0 = None
@@ -139,21 +140,31 @@ class Slam2DIncremental(Slam):
                   fields=[field],
                   dims=(self.width, self.height))
 
+    def generateWorldCenter(self):
+        self.all_centers.append(self.cameras[-1].getWorldCenter())
+
     def generatePolygon(self):
         points = []
         for point in self.cameras[-1].quad.points:
             points.append((point.x, point.y))
         self.all_polygons.append(Polygon(points))
 
+    def getDistanceThreshold(self):
+        d = self.distance(self.all_centers[0], self.all_centers[1])
+        return (2 * (d * d)**(1 / 2)) * 1.05
+
     def getTrivialBaIndices(self):
         return [len(self.cameras) - 2, len(self.cameras) - 1]
 
-    def getIntersectionBasedBaIndices(self):
+    def getIntersectionBasedBaIndices(self, threshold):
         indices = []
+        current_center = self.all_centers[-1]
         current_polygon = self.all_polygons[-1]
-        for i, other_polygon in enumerate(self.all_polygons[:-1]):
-            if current_polygon.intersects(other_polygon):
-                indices.append(i)
+        for i, other_center in enumerate(self.all_centers[:-1]):
+            if self.distance(current_center, other_center) <= threshold:
+                other_polygon = self.all_polygons[i]
+                if current_polygon.intersects(other_polygon):
+                    indices.append(i)
         indices.append(len(self.all_polygons) - 1)
         return indices
 
@@ -185,6 +196,9 @@ class Slam2DIncremental(Slam):
     def showEnergy(self, camera, energy):
         if self.debug_mode:
             SaveImage(self.cache_dir + "/energy/%04d.tif" % (camera.id,), energy)
+
+    def distance(self, p1, p2):
+        return (((p2.x-p1.x)**2)+((p2.y-p1.y)**2)+((p2.z-p1.z)**2))**(1/2)
 
     def guessLocalCamera(self):
         box = self.getQuadsBox()
@@ -360,7 +374,7 @@ class Slam2DIncremental(Slam):
         self.midx_footer.append("")
         self.midx_footer.append("</dataset>")
 
-    def addToMidx(self):
+    def createMidx(self):
         self.midx_header.clear()
         self.midx_poi.clear()
         self.midx_polygon.clear()
