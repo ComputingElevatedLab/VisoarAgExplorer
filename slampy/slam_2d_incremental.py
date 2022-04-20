@@ -1,6 +1,8 @@
 import os.path
 
 from math import isnan
+
+import OpenVisus.VisusKernelPy
 from shapely.geometry import Polygon
 from slampy.image_provider import *
 from slampy.image_provider_generic import ImageProviderGeneric
@@ -141,21 +143,21 @@ class Slam2DIncremental(Slam):
         return [len(self.cameras) - 2, len(self.cameras) - 1]
 
     def getIntersectionBasedBaIndices(self, threshold):
-        indices = []
+        indices = StdVectorInt()
         current_center = self.all_centers[-1]
         current_polygon = self.all_polygons[-1]
         for i, other_center in enumerate(self.all_centers[:-1]):
             if self.distance(current_center, other_center) <= threshold:
                 other_polygon = self.all_polygons[i]
                 if current_polygon.intersects(other_polygon):
-                    indices.append(i)
-        indices.append(len(self.all_polygons) - 1)
+                    indices.push_back(i)
+        indices.push_back(len(self.all_polygons) - 1)
         return indices
 
-    def bundle(self):
+    def bundle(self, indices):
         tolerances = (10.0 * self.ba_tolerance, 1.0 * self.ba_tolerance)
         for tolerance in tolerances:
-            self.bundleAdjustment(tolerance)
+            self.bundleAdjustment(tolerance, indices)
 
     def showEnergy(self, camera, energy):
         if self.debug_mode:
@@ -600,13 +602,13 @@ class Slam2DIncremental(Slam):
         camera2.getEdge(camera1).setMatches(matches, str(len(matches)))
         return len(matches)
 
-    def findAllMatches(self):
+    def findAllMatches(self, indices):
         start = time.time()
         jobs = []
         camera = self.cameras[-1]
-        for local_camera in camera.getAllLocalCameras():
-            if local_camera.id < camera.id:
-                jobs.append(lambda pair=(local_camera, camera): self.findMatches(pair[0], pair[1]))
+        for index in indices[:-1]:
+            other_camera = self.cameras[index]
+            jobs.append(lambda pair=(other_camera, camera): self.findMatches(pair[0], pair[1]))
         print(len(jobs), "Finding all matches")
 
         num_matches = 0
