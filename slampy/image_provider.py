@@ -139,7 +139,6 @@ class ImageProvider:
 				img.metadata=reader.readMetadata(filename)
 
 			self.advanceAction(I)
-			time.sleep(0.00001)
 
 		self.endAction()
 		print("Finished")	
@@ -381,8 +380,10 @@ class ImageProvider:
 			old_alt=img.alt
 			img.alt-=value	
 			print("\t",img.filenames[0],"GPS Corrected","Altitude",old_alt,"to ",img.alt)
-			if img.alt<1.0: 
+			if img.alt<1.0:
 				print("dropping",img.filenames[0], "because too low")
+			elif "target" in img.filenames[0]:
+				print('dropping',img.filenames[0], "because it is the target image")
 			else:
 				good.append(img)
 
@@ -390,7 +391,10 @@ class ImageProvider:
 
 	# guessPlane
 	def guessPlane(self):
-
+		
+		
+		# return 0.0
+		
 		img=self.images[0]
 
 		# could be I have some images on the floor (i.e. panels)
