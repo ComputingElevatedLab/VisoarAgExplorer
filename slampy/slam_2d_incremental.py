@@ -63,7 +63,7 @@ class Slam2DIncremental(Slam):
         self.provider.image_dir = self.image_dir
         self.provider.cache_dir = self.cache_dir
         self.provider.extractor_method = "akaze"
-        self.provider.calibration = None
+        # self.provider.calibration = None
 
     def addImage(self, image):
         self.provider.addImage([image])
@@ -91,8 +91,7 @@ class Slam2DIncremental(Slam):
         self.provider.loadYawFromMetadata()
 
         self.provider.interpolateGPS()
-        if not self.provider.plane:
-            self.provider.plane = self.provider.guessPlane()
+        self.provider.plane = self.provider.guessPlane()
         self.provider.setPlane(self.provider.plane)
 
         latest_image = self.provider.images[-1]
@@ -142,22 +141,34 @@ class Slam2DIncremental(Slam):
     def getTrivialBaIndices(self):
         return [len(self.cameras) - 2, len(self.cameras) - 1]
 
-    def getIntersectionBasedBaIndices(self, threshold):
-        indices = StdVectorInt()
-        current_center = self.all_centers[-1]
-        current_polygon = self.all_polygons[-1]
-        for i, other_center in enumerate(self.all_centers[:-1]):
-            if self.distance(current_center, other_center) <= threshold:
-                other_polygon = self.all_polygons[i]
-                if current_polygon.intersects(other_polygon):
-                    indices.push_back(i)
-        indices.push_back(len(self.all_polygons) - 1)
-        return indices
+    def getIntersectionBasedBaMask(self, index, threshold):
+        mask = StdVectorInt()
+        current_center = self.all_centers[index]
+        # current_polygon = self.all_polygons[index]
+        for i, other_center in enumerate(self.all_centers):
+            if i == index:
+                mask.push_back(1)
+            elif self.distance(current_center, other_center) <= threshold:
+                mask.push_back(1)
+                # other_polygon = self.all_polygons[i]
+                # if current_polygon.intersects(other_polygon):
+                #     mask.push_back(1)
+                # else:
+                #     mask.push_back(0)
+            else:
+                mask.push_back(0)
 
-    def bundle(self, indices):
+        return mask
+
+    def bundle(self):
         tolerances = (10.0 * self.ba_tolerance, 1.0 * self.ba_tolerance)
         for tolerance in tolerances:
-            self.bundleAdjustment(tolerance, indices)
+            self.bundleAdjustment(tolerance)
+
+    def localBundle(self, indices):
+        tolerances = (10.0 * self.ba_tolerance, 1.0 * self.ba_tolerance)
+        for tolerance in tolerances:
+            self.localBundleAdjustment(tolerance, indices)
 
     def showEnergy(self, camera, energy):
         if self.debug_mode:
@@ -178,8 +189,7 @@ class Slam2DIncremental(Slam):
         center = self.cameras[-1].quad.centroid()
         center = (numpy.float32(center.x), numpy.float32(center.y))
         if center in find_camera:
-            print(
-                f"The following cameras seems to be in the same position: {find_camera[center].id} {self.cameras[-1].id}")
+            print(f"The following cameras are in the same position: {find_camera[center].id} {self.cameras[-1].id}")
         else:
             find_camera[center] = self.cameras[-1]
             subdiv.insert(center)
@@ -272,11 +282,10 @@ class Slam2DIncremental(Slam):
 
     def guessInitialPose(self):
         lat0, lon0 = self.images[0].lat, self.images[0].lon
-        i = len(self.cameras) - 1
-        lat, lon, alt = self.images[i].lat, self.images[i].lon, self.images[i].alt
+        img = self.images[-1]
+        lat, lon, alt = img.lat, img.lon, img.alt
         x, y = GPSUtils.gpsToLocalCartesian(lat, lon, lat0, lon0)
         world_center = Point3d(x, y, alt)
-        img = self.images[i]
         q = Quaternion(Point3d(0, 0, 1), -img.yaw) * Quaternion(Point3d(1, 0, 0), math.pi)
         self.cameras[-1].pose = Pose(q, world_center).inverse()
 
@@ -476,7 +485,7 @@ class Slam2DIncremental(Slam):
 
     def convertAndExtract(self, args):
         extraction_start = time.time()
-        i, (img, camera) = args
+        (img, camera) = args
         if not self.extractor:
             self.extractor = ExtractKeyPoints(self.min_num_keypoints, self.max_num_keypoints, self.anms,
                                               self.extractor_method)
@@ -556,8 +565,8 @@ class Slam2DIncremental(Slam):
         # convert to idx and find keypoints (don't use threads for IO ! it will slow down things)
         # NOTE I'm disabling write-locks
         print("Converting idx and extracting keypoints...")
-        for i, (img, camera) in enumerate(zip(self.images, self.cameras)):
-            self.convertAndExtract([i, (img, camera)])
+        # for i, (img, camera) in enumerate(zip(self.images, self.cameras)):
+        self.convertAndExtract([self.images[-1], self.cameras[-1]])
         stop = time.time()
         print(f"Conversion and feature extraction time: {(stop - start) * 1000} ms")
 
@@ -602,22 +611,24 @@ class Slam2DIncremental(Slam):
         camera2.getEdge(camera1).setMatches(matches, str(len(matches)))
         return len(matches)
 
-    def findAllMatches(self, indices):
+    def findAllMatches(self):
         start = time.time()
         jobs = []
         camera = self.cameras[-1]
-        for index in indices[:-1]:
-            other_camera = self.cameras[index]
-            jobs.append(lambda pair=(other_camera, camera): self.findMatches(pair[0], pair[1]))
-        print(len(jobs), "Finding all matches")
-
         num_matches = 0
-        if self.debug_mode:
-            for i, job in enumerate(jobs):
-                num_matches += job()
-        elif len(jobs) > 0:
-            results = RunJobsInParallel(jobs)
-            num_matches = sum(results)
+        for local_camera in camera.getAllLocalCameras():
+            if local_camera.id < camera.id:
+                num_matches += self.findMatches(local_camera, camera)
+                # jobs.append(lambda pair=(local_camera, camera): self.findMatches(pair[0], pair[1]))
+        # print(len(jobs), "Finding all matches")
+
+        # num_matches = 0
+        # if self.debug_mode:
+        #     for i, job in enumerate(jobs):
+        #         num_matches += job()
+        # elif len(jobs) > 0:
+        #     results = RunJobsInParallel(jobs)
+        #     num_matches = sum(results)
         stop = time.time()
         print(f"Found {num_matches} matches in: {(stop - start) * 1000} ms")
 
@@ -625,13 +636,9 @@ class Slam2DIncremental(Slam):
         start = time.time()
         print("Generating image", img.filenames[0])
         image = InterleaveChannels(self.provider.generateMultiImage(img))
-        stop = time.time()
-        print(
-            f"Done: {img.id}, range {ComputeImageRange(image)}, shape {image.shape}, dtype {image.dtype} in {(stop - start) * 1000}")
+        stop = (time.time() - start) * 1000
+        print(f"Done: {img.id}, range {ComputeImageRange(image)}, shape {image.shape}, dtype {image.dtype} in {stop}")
         return image
-
-    def createEmptyKeypointFile(self):
-        self.saveKeyPoints(Camera(), self.empty_keypoint_path)
 
 
 # Compose a new image from two provided components on a given axis.
