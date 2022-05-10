@@ -14,14 +14,21 @@ execution_times = {}
 
 
 def writeTimesToCsv():
-    file = open("times.csv", "a")
-    for key in execution_times.keys():
-        times = execution_times[key]
-        file.write(f"{key},")
-        for i in range(len(times)):
-            file.write(f"{times[i]},")
-        file.write("\n")
-    file.close()
+    filename = "times.csv"
+    if os.path.exists(filename):
+        os.remove(filename)
+    with open(filename, "a") as file:
+        for key in execution_times.keys():
+            times = execution_times[key]
+            file.write(f"{key},")
+            total = 0
+            for t in times:
+                total += t
+            file.write(f"{total},{total / len(times)},{min(times)},{max(times)},")
+            for i in range(len(times)):
+                file.write(f"{times[i]},")
+            file.write("\n")
+        file.close()
 
 
 # Perform 2D SLAM tasks incrementally
