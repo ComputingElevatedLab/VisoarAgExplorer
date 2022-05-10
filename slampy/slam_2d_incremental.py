@@ -2,7 +2,6 @@ import os.path
 
 from math import isnan
 
-import OpenVisus.VisusKernelPy
 from shapely.geometry import Polygon
 from slampy.image_provider import *
 from slampy.image_provider_generic import ImageProviderGeneric
@@ -10,6 +9,19 @@ from slampy.image_provider_lumenera import ImageProviderLumenera
 from slampy.image_provider_micasense import ImageProviderRedEdge
 from slampy.image_provider_sequoia import ImageProviderSequoia
 from slampy.image_utils import *
+
+execution_times = {}
+
+
+def writeTimesToCsv():
+    file = open("times.csv", "a")
+    for key in execution_times.keys():
+        times = execution_times[key]
+        file.write(f"{key},")
+        for i in range(len(times)):
+            file.write(f"{times[i]},")
+        file.write("\n")
+    file.close()
 
 
 # Perform 2D SLAM tasks incrementally
@@ -66,6 +78,9 @@ class Slam2DIncremental(Slam):
         # self.provider.calibration = None
 
     def addImage(self, image):
+        func_name = "addImage"
+        start_time = time.time()
+
         self.provider.addImage([image])
         multi = self.provider.generateMultiImage(self.provider.images[-1])
 
@@ -105,7 +120,16 @@ class Slam2DIncremental(Slam):
         self.provider.createUndistortLenMap(multi)
         self.provider.findMultiAlignment(multi)
 
+        stop_time = time.time()
+        if func_name not in execution_times:
+            execution_times[func_name] = []
+        execution_times[func_name].append(stop_time - start_time)
+
+
     def addCamera(self, image):
+        func_name = "addCamera"
+        start_time = time.time()
+
         self.images.append(image)
         camera = Camera()
         camera.id = len(self.cameras)
@@ -114,7 +138,15 @@ class Slam2DIncremental(Slam):
             camera.filenames.append(filename)
         super().addCamera(camera)
 
+        stop_time = time.time()
+        if func_name not in execution_times:
+            execution_times[func_name] = []
+        execution_times[func_name].append(stop_time - start_time)
+
     def createIdx(self, camera):
+        func_name = "createIdx"
+        start_time = time.time()
+
         camera.idx_filename = f"./idx/{camera.id:04d}.idx"
         field = Field("myfield", self.dtype)
         field.default_layout = "row_major"
@@ -125,23 +157,67 @@ class Slam2DIncremental(Slam):
                   fields=[field],
                   dims=(self.width, self.height))
 
+        stop_time = time.time()
+        if func_name not in execution_times:
+            execution_times[func_name] = []
+        execution_times[func_name].append(stop_time - start_time)
+
     def generateWorldCenter(self):
+        func_name = "generateWorldCenter"
+        start_time = time.time()
+
         self.all_centers.append(self.cameras[-1].getWorldCenter())
 
+        stop_time = time.time()
+        if func_name not in execution_times:
+            execution_times[func_name] = []
+        execution_times[func_name].append(stop_time - start_time)
+
     def generatePolygon(self):
+        func_name = "generatePolygon"
+        start_time = time.time()
+
         points = []
         for point in self.cameras[-1].quad.points:
             points.append((point.x, point.y))
         self.all_polygons.append(Polygon(points))
 
+        stop_time = time.time()
+        if func_name not in execution_times:
+            execution_times[func_name] = []
+        execution_times[func_name].append(stop_time - start_time)
+
     def getDistanceThreshold(self):
+        func_name = "getDistanceThreshold"
+        start_time = time.time()
+
         d = self.distance(self.all_centers[0], self.all_centers[1])
-        return (2 * (d * d)**(1 / 2)) * 1.05
+        ret_val = (2 * (d * d)**(1 / 2)) * 1.05
+
+        stop_time = time.time()
+        if func_name not in execution_times:
+            execution_times[func_name] = []
+        execution_times[func_name].append(stop_time - start_time)
+
+        return ret_val
 
     def getTrivialBaIndices(self):
-        return [len(self.cameras) - 2, len(self.cameras) - 1]
+        func_name = "getTrivialBaIndices"
+        start_time = time.time()
+
+        ret_val = [len(self.cameras) - 2, len(self.cameras) - 1]
+
+        stop_time = time.time()
+        if func_name not in execution_times:
+            execution_times[func_name] = []
+        execution_times[func_name].append(stop_time - start_time)
+
+        return ret_val
 
     def getIntersectionBasedBaMask(self, index, threshold):
+        func_name = "getIntersectionBasedBaMask"
+        start_time = time.time()
+
         mask = StdVectorInt()
         current_center = self.all_centers[index]
         # current_polygon = self.all_polygons[index]
@@ -158,26 +234,68 @@ class Slam2DIncremental(Slam):
             else:
                 mask.push_back(0)
 
+        stop_time = time.time()
+        if func_name not in execution_times:
+            execution_times[func_name] = []
+        execution_times[func_name].append(stop_time - start_time)
+
         return mask
 
     def bundle(self):
+        func_name = "bundle"
+        start_time = time.time()
+
         tolerances = (10.0 * self.ba_tolerance, 1.0 * self.ba_tolerance)
         for tolerance in tolerances:
             self.bundleAdjustment(tolerance)
 
+        stop_time = time.time()
+        if func_name not in execution_times:
+            execution_times[func_name] = []
+        execution_times[func_name].append(stop_time - start_time)
+
     def localBundle(self, indices):
+        func_name = "localBundle"
+        start_time = time.time()
+
         tolerances = (10.0 * self.ba_tolerance, 1.0 * self.ba_tolerance)
         for tolerance in tolerances:
             self.localBundleAdjustment(tolerance, indices)
 
+        stop_time = time.time()
+        if func_name not in execution_times:
+            execution_times[func_name] = []
+        execution_times[func_name].append(stop_time - start_time)
+
     def showEnergy(self, camera, energy):
+        func_name = "showEnergy"
+        start_time = time.time()
+
         if self.debug_mode:
             SaveImage(self.cache_dir + "/energy/%04d.tif" % (camera.id,), energy)
 
+        stop_time = time.time()
+        if func_name not in execution_times:
+            execution_times[func_name] = []
+        execution_times[func_name].append(stop_time - start_time)
+
     def distance(self, p1, p2):
-        return (((p2.x-p1.x)**2)+((p2.y-p1.y)**2)+((p2.z-p1.z)**2))**(1/2)
+        func_name = "distance"
+        start_time = time.time()
+
+        ret_val = (((p2.x-p1.x)**2)+((p2.y-p1.y)**2)+((p2.z-p1.z)**2))**(1/2)
+
+        stop_time = time.time()
+        if func_name not in execution_times:
+            execution_times[func_name] = []
+        execution_times[func_name].append(stop_time - start_time)
+
+        return ret_val
 
     def guessLocalCamera(self):
+        func_name = "guessLocalCamera"
+        start_time = time.time()
+
         box = self.getQuadsBox()
         x1i = math.floor(box.p1[0])
         x2i = math.ceil(box.p2[0])
@@ -265,7 +383,17 @@ class Slam2DIncremental(Slam):
         out.fill(255)
 
         def toScreen(p):
-            return [int(0 + (p[0] - box.p1[0]) * (W / w)), int(H - (p[1] - box.p1[1]) * (H / h))]
+            func_name = "toScreen"
+            start_time = time.time()
+
+            ret_val = [int(0 + (p[0] - box.p1[0]) * (W / w)), int(H - (p[1] - box.p1[1]) * (H / h))]
+
+            stop_time = time.time()
+            if func_name not in execution_times:
+                execution_times[func_name] = []
+            execution_times[func_name].append(stop_time - start_time)
+
+            return ret_val
 
         for i in range(len(cells)):
             cell = cells[i]
@@ -280,7 +408,15 @@ class Slam2DIncremental(Slam):
 
         # SaveImage(self.cache_dir + "/~local_cameras.png", out)
 
+        stop_time = time.time()
+        if func_name not in execution_times:
+            execution_times[func_name] = []
+        execution_times[func_name].append(stop_time - start_time)
+
     def guessInitialPose(self):
+        func_name = "guessInitialPose"
+        start_time = time.time()
+
         lat0, lon0 = self.images[0].lat, self.images[0].lon
         img = self.images[-1]
         lat, lon, alt = img.lat, img.lon, img.alt
@@ -289,7 +425,14 @@ class Slam2DIncremental(Slam):
         q = Quaternion(Point3d(0, 0, 1), -img.yaw) * Quaternion(Point3d(1, 0, 0), math.pi)
         self.cameras[-1].pose = Pose(q, world_center).inverse()
 
+        stop_time = time.time()
+        if func_name not in execution_times:
+            execution_times[func_name] = []
+        execution_times[func_name].append(stop_time - start_time)
+
     def saveMidx(self):
+        func_name = "saveMidx"
+        start_time = time.time()
 
         print("Saving midx")
         lat0, lon0 = self.images[0].lat, self.images[0].lon
@@ -417,7 +560,14 @@ class Slam2DIncremental(Slam):
                          """)
         print("Google Saved")
 
+        stop_time = time.time()
+        if func_name not in execution_times:
+            execution_times[func_name] = []
+        execution_times[func_name].append(stop_time - start_time)
+
     def debugMatchesGraph(self):
+        func_name = "debugMatchesGraph"
+        start_time = time.time()
 
         box = self.getQuadsBox()
 
@@ -433,8 +583,18 @@ class Slam2DIncremental(Slam):
         out.fill(255)
 
         def getImageCenter(image):
+            func_name = "getImageCenter"
+            start_time = time.time()
+
             p = image.quad.centroid()
-            return int(0 + (p[0] - box.p1[0]) * (W / w)), int(H - (p[1] - box.p1[1]) * (H / h))
+            ret_val = int(0 + (p[0] - box.p1[0]) * (W / w)), int(H - (p[1] - box.p1[1]) * (H / h))
+
+            stop_time = time.time()
+            if func_name not in execution_times:
+                execution_times[func_name] = []
+            execution_times[func_name].append(stop_time - start_time)
+
+            return ret_val
 
         for bGoodMatches in [False, True]:
             for cameraI in self.cameras:
@@ -460,7 +620,15 @@ class Slam2DIncremental(Slam):
 
         SaveImage(GuessUniqueFilename(self.cache_dir + "/~matches%d.png"), out)
 
+        stop_time = time.time()
+        if func_name not in execution_times:
+            execution_times[func_name] = []
+        execution_times[func_name].append(stop_time - start_time)
+
     def debugSolution(self):
+        func_name = "debugSolution"
+        start_time = time.time()
+
         box = self.getQuadsBox()
         w = float(box.size()[0])
         h = float(box.size()[1])
@@ -470,7 +638,17 @@ class Slam2DIncremental(Slam):
         out.fill(255)
 
         def toScreen(p):
-            return int(0 + (p[0] - box.p1[0]) * (W / w)), int(H - (p[1] - box.p1[1]) * (H / h))
+            func_name = "toScreen2"
+            start_time = time.time()
+
+            ret_val = int(0 + (p[0] - box.p1[0]) * (W / w)), int(H - (p[1] - box.p1[1]) * (H / h))
+
+            stop_time = time.time()
+            if func_name not in execution_times:
+                execution_times[func_name] = []
+            execution_times[func_name].append(stop_time - start_time)
+
+            return ret_val
 
         for camera in self.cameras:
             color = (
@@ -483,7 +661,15 @@ class Slam2DIncremental(Slam):
 
         SaveImage(GuessUniqueFilename(self.cache_dir + "/~solution%d.png"), out)
 
+        stop_time = time.time()
+        if func_name not in execution_times:
+            execution_times[func_name] = []
+        execution_times[func_name].append(stop_time - start_time)
+
     def convertAndExtract(self, args):
+        func_name = "convertAndExtract"
+        start_time = time.time()
+
         extraction_start = time.time()
         (img, camera) = args
         if not self.extractor:
@@ -560,17 +746,29 @@ class Slam2DIncremental(Slam):
 
         print(f"Done {camera.filenames[0]}")
 
+        stop_time = time.time()
+        if func_name not in execution_times:
+            execution_times[func_name] = []
+        execution_times[func_name].append(stop_time - start_time)
+
     def convertToIdxAndExtractKeyPoints(self):
-        start = time.time()
+        func_name = "addImage"
+        start_time = time.time()
+
         # convert to idx and find keypoints (don't use threads for IO ! it will slow down things)
-        # NOTE I'm disabling write-locks
         print("Converting idx and extracting keypoints...")
-        # for i, (img, camera) in enumerate(zip(self.images, self.cameras)):
         self.convertAndExtract([self.images[-1], self.cameras[-1]])
-        stop = time.time()
-        print(f"Conversion and feature extraction time: {(stop - start) * 1000} ms")
+        # print(f"Conversion and feature extraction time: {(stop - start) * 1000} ms")
+
+        stop_time = time.time()
+        if func_name not in execution_times:
+            execution_times[func_name] = []
+        execution_times[func_name].append(stop_time - start_time)
 
     def findMatches(self, camera1, camera2):
+        func_name = "findMatches"
+        start_time = time.time()
+
         if camera1.keypoints.empty() or camera2.keypoints.empty():
             camera2.getEdge(camera1).setMatches([], "No keypoints")
             return 0
@@ -609,11 +807,21 @@ class Slam2DIncremental(Slam):
 
         matches = [Match(match.queryIdx, match.trainIdx, match.imgIdx, match.distance) for match in matches]
         camera2.getEdge(camera1).setMatches(matches, str(len(matches)))
-        return len(matches)
+        ret_val = len(matches)
+
+        stop_time = time.time()
+        if func_name not in execution_times:
+            execution_times[func_name] = []
+        execution_times[func_name].append(stop_time - start_time)
+
+        return ret_val
 
     def findAllMatches(self):
-        start = time.time()
-        jobs = []
+        func_name = "findAllMatches"
+        start_time = time.time()
+
+        # start = time.time()
+        # jobs = []
         camera = self.cameras[-1]
         num_matches = 0
         for local_camera in camera.getAllLocalCameras():
@@ -629,20 +837,36 @@ class Slam2DIncremental(Slam):
         # elif len(jobs) > 0:
         #     results = RunJobsInParallel(jobs)
         #     num_matches = sum(results)
-        stop = time.time()
-        print(f"Found {num_matches} matches in: {(stop - start) * 1000} ms")
+        # stop = time.time()
+        # print(f"Found {num_matches} matches in: {(stop - start) * 1000} ms")
+        stop_time = time.time()
+        if func_name not in execution_times:
+            execution_times[func_name] = []
+        execution_times[func_name].append(stop_time - start_time)
 
     def generateImage(self, img):
+        func_name = "generateImage"
+        start_time = time.time()
+
         start = time.time()
         print("Generating image", img.filenames[0])
         image = InterleaveChannels(self.provider.generateMultiImage(img))
         stop = (time.time() - start) * 1000
         print(f"Done: {img.id}, range {ComputeImageRange(image)}, shape {image.shape}, dtype {image.dtype} in {stop}")
+
+        stop_time = time.time()
+        if func_name not in execution_times:
+            execution_times[func_name] = []
+        execution_times[func_name].append(stop_time - start_time)
+
         return image
 
 
 # Compose a new image from two provided components on a given axis.
 def ComposeImage(layers, axis):
+    func_name = "composeImage"
+    start_time = time.time()
+
     h = [warped.shape[0] for warped in layers]
     w = [energy.shape[1] for energy in layers]
     w, h = [(sum(w), max(h)), (max(w), sum(h))][axis]
@@ -654,10 +878,19 @@ def ComposeImage(layers, axis):
         h, w = single.shape[0], single.shape[1]
         image[current[1]:current[1] + h, current[0]:current[0] + w, :] = single
         current[axis] += [w, h][axis]
+
+    stop_time = time.time()
+    if func_name not in execution_times:
+        execution_times[func_name] = []
+    execution_times[func_name].append(stop_time - start_time)
+
     return image
 
 
 def SaveDatasetPreview(db_filename, img_filename, width=1024):
+    func_name = "saveDatasetPreview"
+    start_time = time.time()
+
     db = LoadDataset(db_filename)
     maxh = db.getMaxResolution()
     logic_box = db.getLogicBox()
@@ -667,6 +900,11 @@ def SaveDatasetPreview(db_filename, img_filename, width=1024):
     deltah = int(math.log2((logic_size[0] / width) * (logic_size[1] / height)))
     data = db.read(logic_box=logic_box, max_resolution=(maxh - deltah))
     SaveImage(img_filename, data)
+
+    stop_time = time.time()
+    if func_name not in execution_times:
+        execution_times[func_name] = []
+    execution_times[func_name].append(stop_time - start_time)
 
 
 class RedirectLog:
@@ -682,17 +920,41 @@ class RedirectLog:
         sys.excepthook = self.excepthook
 
     def excepthook(self, exctype, value, traceback):
+        func_name = "exceptHook"
+        start_time = time.time()
+
         sys.stdout = self.__stdout__
         sys.stderr = self.__stderr__
         sys.excepthook = self.__excepthook__
         sys.excepthook(exctype, value, traceback)
 
+        stop_time = time.time()
+        if func_name not in execution_times:
+            execution_times[func_name] = []
+        execution_times[func_name].append(stop_time - start_time)
+
     def write(self, msg):
+        func_name = "write"
+        start_time = time.time()
+
         msg = msg.replace(f"\n\n{datetime.datetime.now()[0:-7]} ")
         sys.__stdout__.write(msg)
         sys.__stdout__.flush()
         self.log.write(msg)
 
+        stop_time = time.time()
+        if func_name not in execution_times:
+            execution_times[func_name] = []
+        execution_times[func_name].append(stop_time - start_time)
+
     def flush(self):
+        func_name = "flush"
+        start_time = time.time()
+
         sys.__stdout__.flush()
         self.log.flush()
+
+        stop_time = time.time()
+        if func_name not in execution_times:
+            execution_times[func_name] = []
+        execution_times[func_name].append(stop_time - start_time)
