@@ -280,7 +280,7 @@ class ImageProvider:
 				img.lat=ParseDouble(img.metadata[LAT])
 				img.lon=ParseDouble(img.metadata[LON])
 				img.alt=ParseDouble(img.metadata[ALT])
-				print("image",img.filenames[0],"lat",img.lat,"lon",img.lon,"alt",img.alt)
+				#print("image",img.filenames[0],"lat",img.lat,"lon",img.lon,"alt",img.alt)
 			except:
 				print("WARNING","image",img.filenames[0],"does not have",LAT,LON,ALT)
 
@@ -327,7 +327,7 @@ class ImageProvider:
 
 				if YAW in img.metadata:
 					img.yaw=ParseDouble(img.metadata[YAW])
-					print(img.filenames[0], YAW,img.yaw)
+					#print(img.filenames[0], YAW,img.yaw)
 				else:
 					img.yaw=self.images[I-1].yaw
 					print(img.filenames[0], "missing",YAW,"using last one",img.yaw)
@@ -379,7 +379,7 @@ class ImageProvider:
 		for I,img in enumerate(self.images):
 			old_alt=img.alt
 			img.alt-=value	
-			print("\t",img.filenames[0],"GPS Corrected","Altitude",old_alt,"to ",img.alt)
+			# print("\t",img.filenames[0],"GPS Corrected","Altitude",old_alt,"to ",img.alt)
 			if img.alt<1.0:
 				print("dropping",img.filenames[0], "because too low")
 			elif "target" in img.filenames[0]:

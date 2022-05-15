@@ -213,7 +213,7 @@ class Slam2DIncremental(Slam):
         if self.verbose:
             start_time = time.time()
 
-        self.distance_threshold = self.distance(self.all_centers[0], self.all_centers[1]) * 2
+        self.distance_threshold = self.distance(self.all_centers[0], self.all_centers[1]) * 3
 
         if self.verbose:
             stop_time = time.time()
@@ -817,6 +817,10 @@ class Slam2DIncremental(Slam):
             camera2.getEdge(camera1).setMatches([], "No keypoints")
             return 0
 
+        # We have already set matches for these two cameras
+        if camera2.getEdge(camera1).isGood():
+            return 0
+
         matches, H21, err = FindMatches(self.width, self.height,
                                         camera1.id, [(k.x, k.y) for k in camera1.keypoints],
                                         Array.toNumPy(camera1.descriptors),
@@ -851,34 +855,25 @@ class Slam2DIncremental(Slam):
 
         matches = [Match(match.queryIdx, match.trainIdx, match.imgIdx, match.distance) for match in matches]
         camera2.getEdge(camera1).setMatches(matches, str(len(matches)))
-        ret_val = len(matches)
 
         stop_time = time.time()
         if func_name not in execution_times:
             execution_times[func_name] = []
         execution_times[func_name].append(stop_time - start_time)
 
-        return ret_val
+        return len(matches)
 
-    def findAllMatches(self):
+    def findAllMatches(self, index, mask):
         func_name = "findAllMatches"
         start_time = time.time()
 
-        camera = self.cameras[-1]
+        camera = self.cameras[index]
         num_matches = 0
-        for local_camera in camera.getAllLocalCameras():
-            if local_camera.id < camera.id:
+        for i in range(len(mask)):
+            if i != index and mask[i] == 1:
+                local_camera = self.cameras[i]
                 num_matches += self.findMatches(local_camera, camera)
-                # jobs.append(lambda pair=(local_camera, camera): self.findMatches(pair[0], pair[1]))
-        # print(len(jobs), "Finding all matches")
-
-        # num_matches = 0
-        # if self.debug_mode:
-        #     for i, job in enumerate(jobs):
-        #         num_matches += job()
-        # elif len(jobs) > 0:
-        #     results = RunJobsInParallel(jobs)
-        #     num_matches = sum(results)
+        print(f"Found {num_matches} matches")
 
         stop_time = time.time()
         if func_name not in execution_times:
