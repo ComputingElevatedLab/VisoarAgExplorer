@@ -70,6 +70,7 @@ class Slam2DIncremental(Slam):
         self.all_centers = []
         self.all_polygons = []
         self.verbose = verbose
+        self.temp_cameras = VectorOfCamera()
 
         # Initialize the provider
         if provider_type == "lumenera":
@@ -209,7 +210,7 @@ class Slam2DIncremental(Slam):
 
         return ret_val
 
-    def getIntersectionBasedBaMask(self, index):
+    def getIntersectionBaIndices(self, index):
         func_name = "getIntersectionBasedBaMask"
         start_time = None
         if self.verbose:
@@ -218,31 +219,20 @@ class Slam2DIncremental(Slam):
         if self.distance_threshold is None:
             self.getDistanceThreshold()
 
-        # mask = StdVectorInt()
-        # current_center = self.all_centers[index]
-        # for i, other_center in enumerate(self.all_centers):
-        #     if i == index:
-        #         mask.push_back(1)
-        #     elif self.distance(current_center, other_center) <= self.distance_threshold:
-        #         mask.push_back(1)
-        #     else:
-        #         mask.push_back(0)
-
-        mask = StdVectorInt()
+        indices = []
         current_center = self.all_centers[index]
         current_quad = self.cameras[index].quad
         for i in range(len(self.cameras)):
             if i == index:
-                mask.push_back(1)
+                indices.append(i)
                 continue
             other_center = self.all_centers[i]
             if self.distance(current_center, other_center) <= self.distance_threshold:
                 other_quad = self.cameras[i].quad
                 if Quad.intersection(current_quad, other_quad):
                     self.findMatches(self.cameras[index], self.cameras[i])
-                    mask.push_back(1)
+                    indices.append(i)
                     continue
-            mask.push_back(0)
 
         if self.verbose:
             stop_time = time.time()
@@ -250,7 +240,25 @@ class Slam2DIncremental(Slam):
                 execution_times[func_name] = []
             execution_times[func_name].append(stop_time - start_time)
 
-        return mask
+        return indices
+
+    def findMergedMatches(self, indices):
+        func_name = "findMergedMatches"
+        start_time = None
+        if self.verbose:
+            start_time = time.time()
+
+        for i, _ in enumerate(indices[:-1]):
+            current_camera = self.cameras[i]
+            for j in range(i + 1, len(indices)):
+                other_camera = self.cameras[j]
+                self.findMatches(current_camera, other_camera)
+
+        if self.verbose:
+            stop_time = time.time()
+            if func_name not in execution_times:
+                execution_times[func_name] = []
+            execution_times[func_name].append(stop_time - start_time)
 
     def bundle(self):
         func_name = "bundle"
@@ -272,7 +280,12 @@ class Slam2DIncremental(Slam):
         if self.verbose:
             start_time = time.time()
 
-        self.localBundleAdjustment(self.ba_tolerance, indices)
+        for i in indices:
+            self.temp_cameras.push_back(self.cameras[i])
+        self.cameras.swap(self.temp_cameras)
+        self.localBundleAdjustment(self.ba_tolerance)
+        self.cameras.swap(self.temp_cameras)
+        self.temp_cameras.clear()
 
         if self.verbose:
             stop_time = time.time()
@@ -458,7 +471,7 @@ class Slam2DIncremental(Slam):
                 execution_times[func_name] = []
             execution_times[func_name].append(stop_time - start_time)
 
-    def saveMidx(self):
+    def saveMidx(self, num_processed):
         func_name = "saveMidx"
         start_time = None
         if self.verbose:
@@ -576,7 +589,7 @@ class Slam2DIncremental(Slam):
         lines.append("")
         lines.append("</dataset>")
 
-        SaveTextDocument(self.cache_dir + "/visus.midx", "\n".join(lines))
+        SaveTextDocument(f"{self.cache_dir}/visus{num_processed}.midx", "\n".join(lines))
         print("Midx Saved")
 
         print("Saving google")
@@ -894,11 +907,6 @@ class Slam2DIncremental(Slam):
             execution_times[func_name].append(stop_time - start_time)
 
         return image
-
-    def generateOutput(self):
-        self.debugMatchesGraph()
-        self.debugSolution()
-        self.saveMidx()
 
 
 # Compose a new image from two provided components on a given axis.
