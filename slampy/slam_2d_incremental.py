@@ -220,17 +220,22 @@ class Slam2DIncremental(Slam):
             self.getDistanceThreshold()
 
         indices = []
+        current_camera = self.cameras[index]
         current_center = self.all_centers[index]
-        current_quad = self.cameras[index].quad
+        current_quad = current_camera.quad
+        color = current_camera.color
+        print(color.toString())
         for i in range(len(self.cameras)):
             if i == index:
                 indices.append(i)
                 continue
             other_center = self.all_centers[i]
             if self.distance(current_center, other_center) <= self.distance_threshold:
-                other_quad = self.cameras[i].quad
+                other_camera = self.cameras[i]
+                other_quad = other_camera.quad
                 if Quad.intersection(current_quad, other_quad):
-                    self.findMatches(self.cameras[index], self.cameras[i])
+                    self.findMatches(current_camera, other_camera)
+                    other_camera.color = color
                     indices.append(i)
                     continue
 
