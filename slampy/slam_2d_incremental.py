@@ -67,7 +67,6 @@ class Slam2DIncremental(Slam):
         self.do_bundle_adjustment = True
         self.num_converted = 0
         self.distance_threshold = None
-        self.all_centers = []
         self.all_polygons = []
         self.verbose = verbose
         self.temp_cameras = VectorOfCamera()
@@ -188,7 +187,7 @@ class Slam2DIncremental(Slam):
         if self.verbose:
             start_time = time.time()
 
-        self.distance_threshold = self.distance(self.all_centers[0], self.all_centers[1]) * 3
+        self.distance_threshold = self.distance(self.cameras[0].getWorldCenter(), self.cameras[1].getWorldCenter()) * 3
 
         if self.verbose:
             stop_time = time.time()
@@ -219,14 +218,12 @@ class Slam2DIncremental(Slam):
             self.getDistanceThreshold()
 
         indices = [index]
-        center = self.all_centers[index]
         camera = self.cameras[index]
         camera.bFixed = False
         for i, other_camera in enumerate(self.cameras):
             if i == index:
                 continue
-            other_center = self.all_centers[i]
-            distance = self.distance(center, other_center)
+            distance = self.distance(camera.getWorldCenter(), other_camera.getWorldCenter())
             if distance <= self.distance_threshold:
                 if i in previous:
                     if Quad.intersection(camera.quad, other_camera.quad):
@@ -703,7 +700,6 @@ class Slam2DIncremental(Slam):
         extraction_start = time.time()
         img = self.images[-1]
         camera = self.cameras[-1]
-        self.all_centers.append(camera.getWorldCenter())
 
         if not self.extractor:
             self.extractor = ExtractKeyPoints(self.min_num_keypoints, self.max_num_keypoints, self.anms, self.extractor_method)
