@@ -188,7 +188,7 @@ class Slam2DIncremental(Slam):
         if self.verbose:
             start_time = time.time()
 
-        self.distance_threshold = self.distance(self.all_centers[0], self.all_centers[1]) * 2
+        self.distance_threshold = self.distance(self.all_centers[0], self.all_centers[1]) * 3
 
         if self.verbose:
             stop_time = time.time()
@@ -196,7 +196,6 @@ class Slam2DIncremental(Slam):
                 execution_times[func_name] = []
             execution_times[func_name].append(stop_time - start_time)
 
-    # TODO: Change this to return a mask instead of indices
     def getTrivialBaIndices(self):
         func_name = "getTrivialBaIndices"
         start_time = time.time()
@@ -210,7 +209,7 @@ class Slam2DIncremental(Slam):
 
         return ret_val
 
-    def getIntersectionBaIndices(self, index):
+    def getIntersectionBaIndices(self, index, previous):
         func_name = "getIntersectionBasedBaMask"
         start_time = None
         if self.verbose:
@@ -219,25 +218,30 @@ class Slam2DIncremental(Slam):
         if self.distance_threshold is None:
             self.getDistanceThreshold()
 
-        indices = []
-        current_camera = self.cameras[index]
-        current_center = self.all_centers[index]
-        current_quad = current_camera.quad
-        color = current_camera.color
-        print(color.toString())
-        for i in range(len(self.cameras)):
+        indices = [index]
+        center = self.all_centers[index]
+        camera = self.cameras[index]
+        camera.bFixed = False
+        for i, other_camera in enumerate(self.cameras):
             if i == index:
-                indices.append(i)
                 continue
             other_center = self.all_centers[i]
-            if self.distance(current_center, other_center) <= self.distance_threshold:
-                other_camera = self.cameras[i]
-                other_quad = other_camera.quad
-                if Quad.intersection(current_quad, other_quad):
-                    self.findMatches(current_camera, other_camera)
-                    other_camera.color = color
+            distance = self.distance(center, other_center)
+            if distance <= self.distance_threshold:
+                if i in previous:
+                    if Quad.intersection(camera.quad, other_camera.quad):
+                        self.findMatches(camera, other_camera)
+                        other_camera.color = camera.color
+                        other_camera.bFixed = False
+                    else:
+                        other_camera.bFixed = True
+                else:
+                    self.findMatches(camera, other_camera)
+                    other_camera.color = camera.color
+                    other_camera.bFixed = False
                     indices.append(i)
-                    continue
+            else:
+                other_camera.bFixed = True
 
         if self.verbose:
             stop_time = time.time()
