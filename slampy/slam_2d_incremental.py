@@ -251,24 +251,6 @@ class Slam2DIncremental(Slam):
 
         return indices
 
-    def findMergedMatches(self, indices):
-        func_name = "findMergedMatches"
-        start_time = None
-        if self.verbose:
-            start_time = time.time()
-
-        for i, _ in enumerate(indices[:-1]):
-            current_camera = self.cameras[i]
-            for j in range(i + 1, len(indices)):
-                other_camera = self.cameras[j]
-                self.findMatches(current_camera, other_camera)
-
-        if self.verbose:
-            stop_time = time.time()
-            if func_name not in execution_times:
-                execution_times[func_name] = []
-            execution_times[func_name].append(stop_time - start_time)
-
     def bundle(self):
         func_name = "bundle"
         start_time = None
@@ -276,25 +258,6 @@ class Slam2DIncremental(Slam):
             start_time = time.time()
 
         self.bundleAdjustment(self.ba_tolerance)
-
-        if self.verbose:
-            stop_time = time.time()
-            if func_name not in execution_times:
-                execution_times[func_name] = []
-            execution_times[func_name].append(stop_time - start_time)
-
-    def localBundle(self, indices):
-        func_name = "localBundle"
-        start_time = None
-        if self.verbose:
-            start_time = time.time()
-
-        for i in indices:
-            self.temp_cameras.push_back(self.cameras[i])
-        self.cameras.swap(self.temp_cameras)
-        self.localBundleAdjustment(self.ba_tolerance)
-        self.cameras.swap(self.temp_cameras)
-        self.temp_cameras.clear()
 
         if self.verbose:
             stop_time = time.time()
@@ -880,25 +843,6 @@ class Slam2DIncremental(Slam):
             execution_times[func_name].append(stop_time - start_time)
 
         return len(matches)
-
-    def findAllMatches(self):
-        func_name = "findAllMatches"
-        start_time = None
-        if self.verbose:
-            start_time = time.time()
-
-        num_matches = 0
-        for i, current_camera in enumerate(self.cameras[:-1]):
-            for j in range(i + 1, len(self.cameras)):
-                other_camera = self.cameras[j]
-                num_matches += self.findMatches(current_camera, other_camera)
-        print(f"Found {num_matches} matches")
-
-        if self.verbose:
-            stop_time = time.time()
-            if func_name not in execution_times:
-                execution_times[func_name] = []
-            execution_times[func_name].append(stop_time - start_time)
 
     def generateImage(self, img):
         func_name = "generateImage"
