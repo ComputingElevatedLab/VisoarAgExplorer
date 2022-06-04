@@ -67,9 +67,8 @@ class Slam2DIncremental(Slam):
         self.do_bundle_adjustment = True
         self.num_converted = 0
         self.distance_threshold = None
-        self.all_polygons = []
         self.verbose = verbose
-        self.temp_cameras = VectorOfCamera()
+        self.centers = {}
 
         # Initialize the provider
         if provider_type == "lumenera":
@@ -187,7 +186,7 @@ class Slam2DIncremental(Slam):
         if self.verbose:
             start_time = time.time()
 
-        self.distance_threshold = self.distance(self.cameras[0].getWorldCenter(), self.cameras[1].getWorldCenter()) * 3
+        self.distance_threshold = self.distance(self.cameras[0].getWorldCenter(), self.cameras[-1].getWorldCenter())
 
         if self.verbose:
             stop_time = time.time()
@@ -223,22 +222,29 @@ class Slam2DIncremental(Slam):
         for i, other_camera in enumerate(self.cameras):
             if i == index:
                 continue
-            distance = self.distance(camera.getWorldCenter(), other_camera.getWorldCenter())
-            if distance <= self.distance_threshold:
-                if i in previous:
-                    if Quad.intersection(camera.quad, other_camera.quad):
-                        self.findMatches(camera, other_camera)
-                        other_camera.color = camera.color
-                        other_camera.bFixed = False
-                    else:
-                        other_camera.bFixed = True
-                else:
-                    self.findMatches(camera, other_camera)
-                    other_camera.color = camera.color
-                    other_camera.bFixed = False
-                    indices.append(i)
-            else:
+
+            distance = self.distance(self.centers[camera.id], self.centers[other_camera.id])
+            if distance > self.distance_threshold or i in previous:
                 other_camera.bFixed = True
+                continue
+
+            self.findMatches(camera, other_camera)
+            other_camera.color = camera.color
+            other_camera.bFixed = False
+            indices.append(i)
+
+        for i in indices[1:]:
+            camera = self.cameras[i]
+            for j in previous:
+                other_camera = self.cameras[j]
+
+                distance = self.distance(self.centers[camera.id], self.centers[other_camera.id])
+                if distance > self.distance_threshold:
+                    continue
+
+                if Quad.intersection(camera.quad, other_camera.quad):
+                    self.findMatches(camera, other_camera)
+                    other_camera.bFixed = False
 
         if self.verbose:
             stop_time = time.time()
@@ -255,6 +261,7 @@ class Slam2DIncremental(Slam):
             start_time = time.time()
 
         self.bundleAdjustment(self.ba_tolerance)
+        self.refreshQuads()
 
         if self.verbose:
             stop_time = time.time()
@@ -700,6 +707,7 @@ class Slam2DIncremental(Slam):
         extraction_start = time.time()
         img = self.images[-1]
         camera = self.cameras[-1]
+        self.centers[camera.id] = camera.getWorldCenter()
 
         if not self.extractor:
             self.extractor = ExtractKeyPoints(self.min_num_keypoints, self.max_num_keypoints, self.anms, self.extractor_method)
