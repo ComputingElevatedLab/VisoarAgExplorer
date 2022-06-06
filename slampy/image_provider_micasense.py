@@ -46,7 +46,8 @@ class ImageProviderRedEdge(ImageProvider):
 		return v[-2]
 	
 	# isPanel
-	def isPanel(self,img):
+	@staticmethod
+	def isPanel(img):
 		panel = micasense.panel.Panel(micasense.image.Image(img.filenames[0]))
 		return panel.panel_detected()
 
@@ -59,7 +60,7 @@ class ImageProviderRedEdge(ImageProvider):
 		# find the first panel
 		while self.images and not self.isPanel(self.images[0]):
 			print("Dropping",self.images[0].filenames,"because I need a panel")
-			self.images=self.images[1:]
+			self.images.pop(0)
 
 		if not self.images:
 			raise Exception("cannot find the panel")
@@ -68,12 +69,12 @@ class ImageProviderRedEdge(ImageProvider):
 		while self.images and self.isPanel(self.images[0]):
 			print(self.images[0].filenames,"is panel")
 			self.panels.append(self.images[0])
-			self.images=self.images[1:]
+			self.images.pop(0)
 
-		if not self.images:
-			raise Exception("cannot find flight images")
+		# if not self.images:
+		# 	raise Exception("cannot find flight images")
 
-		print(self.images[0].filenames,"is not panel, starting the flight")
+		# print(self.images[0].filenames,"is not panel, starting the flight")
 
 		# not I need to find a detected panel (it must be in self.panels)
 		for it in self.panels:
