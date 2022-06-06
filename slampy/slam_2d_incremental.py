@@ -1,3 +1,6 @@
+import micasense.capture
+import micasense.image
+import micasense.panel
 import os.path
 
 from math import isnan
@@ -60,7 +63,7 @@ class Slam2DIncremental(Slam):
         self.keyframes = []
         self.extractor = None
         self.extractor_method = extractor
-        self.micasense_band = 0
+        self.band = 0
         self.physic_box = None
         self.enable_svg = True
         self.enable_color_matching = False
@@ -71,9 +74,13 @@ class Slam2DIncremental(Slam):
         self.centers = {}
 
         # Initialize the provider
+        self.multiband = False
+        self.panels_found = False
+        self.initialized = False
         if provider_type == "lumenera":
             self.provider = ImageProviderLumenera()
-        elif provider_type == "rededge":
+        elif provider_type == "rededge" or provider_type == "micasense":
+            self.multiband = True
             self.provider = ImageProviderRedEdge()
         elif provider_type == "sequoia":
             self.provider = ImageProviderSequoia()
@@ -84,7 +91,7 @@ class Slam2DIncremental(Slam):
         self.provider.plane = None
         self.provider.image_dir = self.image_dir
         self.provider.cache_dir = self.cache_dir
-        self.provider.extractor_method = "akaze"
+        self.provider.extractor_method = extractor
 
     def addImage(self, image):
         func_name = "addImage"
@@ -113,11 +120,83 @@ class Slam2DIncremental(Slam):
         self.provider.loadMetadata()
         self.provider.loadSensorCfg()
 
-        self.provider.findPanels()
         self.provider.loadLatLonAltFromMetadata()
         self.provider.loadYawFromMetadata()
 
         self.provider.interpolateGPS()
+        self.provider.plane = self.provider.guessPlane()
+        self.provider.setPlane(self.provider.plane)
+
+        latest_image = self.provider.images[-1]
+        latest_image.yaw += self.provider.yaw_offset
+        while latest_image.yaw > +math.pi:
+            latest_image.yaw -= 2 * math.pi
+        while latest_image.yaw < -math.pi:
+            latest_image.yaw += 2 * math.pi
+        print(latest_image.filenames[0], "yaw_radians", latest_image.yaw, "yaw_degrees", math.degrees(latest_image.yaw))
+
+        if self.verbose:
+            stop_time = time.time()
+            if func_name not in execution_times:
+                execution_times[func_name] = []
+            execution_times[func_name].append(stop_time - start_time)
+
+        return self.provider.images[-1]
+
+    def addMultibandImage(self, image):
+        func_name = "addMultibandImage"
+        start_time = None
+        if self.verbose:
+            start_time = time.time()
+
+        band = int(image[-5]) - 1
+        images = []
+        for i in range(6):
+            if band == i:
+                images.append(image)
+            else:
+                ith_band_path = image[:-5] + str(i + 1) + image[-4:]
+                images.append(ith_band_path)
+
+        self.provider.addImage(images)
+        if not self.panels_found:
+            panel = micasense.panel.Panel(micasense.image.Image(images[0]))
+            if panel.panel_detected():
+                return None
+
+            if len(self.provider.images) == 1:
+                self.provider.images.pop(0)
+                return None
+
+            self.panels_found = True
+            self.provider.findPanels()
+
+        self.images.append(self.provider.images[-1])
+
+        if not self.initialized:
+            multi = self.provider.generateMultiImage(self.provider.images[-1])
+            image_as_array = Array.fromNumPy(InterleaveChannels(multi), TargetDim=2)
+            self.width = image_as_array.getWidth()
+            self.height = image_as_array.getHeight()
+            self.depth = image_as_array.getDepth()
+            self.dtype = image_as_array.dtype
+            # NOTE: from telemetry I'm just taking lat,lon,alt,yaw (not other stuff)
+            if self.provider.telemetry:
+                self.provider.loadTelemetry(self.provider.telemetry)
+            if not self.provider.calibration:
+                self.provider.calibration = self.provider.guessCalibration(multi)
+            self.calibration = self.provider.calibration
+            self.physic_box = None
+            self.initialized = True
+
+        self.provider.loadMetadata()
+        self.provider.loadSensorCfg()
+
+        self.provider.loadLatLonAltFromMetadata()
+        self.provider.loadYawFromMetadata()
+
+        self.provider.interpolateGPS()
+        # TODO: Continue debugging from here
         self.provider.plane = self.provider.guessPlane()
         self.provider.setPlane(self.provider.plane)
 
