@@ -93,15 +93,32 @@ class Slam2DIncremental(Slam):
         self.provider.image_dir = self.image_dir
         self.provider.cache_dir = self.cache_dir
         self.provider.extractor_method = extractor
+        self.execution_times = {}
 
     def loadImageMetadata(self):
+        func_name = "loadImageMetadata"
+        start_time = None
+        if self.verbose:
+            start_time = time.time()
+
         self.provider.loadMetadata()
         self.provider.loadSensorCfg()
         self.provider.loadLatLonAltFromMetadata()
         self.provider.loadYawFromMetadata()
         self.provider.interpolateGPS()
 
+        if self.verbose:
+            stop_time = time.time()
+            if func_name not in execution_times:
+                execution_times[func_name] = []
+            execution_times[func_name].append(stop_time - start_time)
+
     def initializeSlamImageInfo(self):
+        func_name = "initializeSlamImageInfo"
+        start_time = None
+        if self.verbose:
+            start_time = time.time()
+
         multi = self.provider.generateMultiImage(self.provider.images[-1])
         image_as_array = Array.fromNumPy(InterleaveChannels(multi), TargetDim=2)
         self.width = image_as_array.getWidth()
@@ -116,7 +133,18 @@ class Slam2DIncremental(Slam):
         self.calibration = self.provider.calibration
         self.physic_box = None
 
+        if self.verbose:
+            stop_time = time.time()
+            if func_name not in execution_times:
+                execution_times[func_name] = []
+            execution_times[func_name].append(stop_time - start_time)
+
     def adjustImageYaw(self):
+        func_name = "adjustImageYaw"
+        start_time = None
+        if self.verbose:
+            start_time = time.time()
+
         latest_image = self.provider.images[-1]
         latest_image.yaw += self.provider.yaw_offset
         while latest_image.yaw > +math.pi:
@@ -124,6 +152,12 @@ class Slam2DIncremental(Slam):
         while latest_image.yaw < -math.pi:
             latest_image.yaw += 2 * math.pi
         print(latest_image.filenames[0], "yaw_radians", latest_image.yaw, "yaw_degrees", math.degrees(latest_image.yaw))
+
+        if self.verbose:
+            stop_time = time.time()
+            if func_name not in execution_times:
+                execution_times[func_name] = []
+            execution_times[func_name].append(stop_time - start_time)
 
     def addImage(self, image):
         func_name = "addImage"
