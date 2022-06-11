@@ -39,7 +39,7 @@ def writeTimesToCsv():
 # Perform 2D SLAM tasks incrementally
 class Slam2DIncremental(Slam):
 
-    def __init__(self, directory, provider_type, extractor, verbose):
+    def __init__(self, alt_threshold, directory, provider_type, extractor, verbose):
         super(Slam2DIncremental, self).__init__()
         self.depth = None
         self.width = 0
@@ -69,11 +69,12 @@ class Slam2DIncremental(Slam):
         self.enable_color_matching = False
         self.do_bundle_adjustment = True
         self.num_converted = 0
-        self.distance_threshold = None
+        self.distance_threshold = 0
         self.verbose = verbose
         self.centers = {}
 
         # Initialize the provider
+        self.alt_threshold = alt_threshold
         self.multiband = False
         self.panels_found = False
         self.initialized = False
@@ -93,6 +94,37 @@ class Slam2DIncremental(Slam):
         self.provider.cache_dir = self.cache_dir
         self.provider.extractor_method = extractor
 
+    def loadImageMetadata(self):
+        self.provider.loadMetadata()
+        self.provider.loadSensorCfg()
+        self.provider.loadLatLonAltFromMetadata()
+        self.provider.loadYawFromMetadata()
+        self.provider.interpolateGPS()
+
+    def initializeSlamImageInfo(self):
+        multi = self.provider.generateMultiImage(self.provider.images[-1])
+        image_as_array = Array.fromNumPy(InterleaveChannels(multi), TargetDim=2)
+        self.width = image_as_array.getWidth()
+        self.height = image_as_array.getHeight()
+        self.depth = image_as_array.getDepth()
+        self.dtype = image_as_array.dtype
+        # NOTE: from telemetry I'm just taking lat,lon,alt,yaw (not other stuff)
+        if self.provider.telemetry:
+            self.provider.loadTelemetry(self.provider.telemetry)
+        if not self.provider.calibration:
+            self.provider.calibration = self.provider.guessCalibration(multi)
+        self.calibration = self.provider.calibration
+        self.physic_box = None
+
+    def adjustImageYaw(self):
+        latest_image = self.provider.images[-1]
+        latest_image.yaw += self.provider.yaw_offset
+        while latest_image.yaw > +math.pi:
+            latest_image.yaw -= 2 * math.pi
+        while latest_image.yaw < -math.pi:
+            latest_image.yaw += 2 * math.pi
+        print(latest_image.filenames[0], "yaw_radians", latest_image.yaw, "yaw_degrees", math.degrees(latest_image.yaw))
+
     def addImage(self, image):
         func_name = "addImage"
         start_time = None
@@ -103,37 +135,13 @@ class Slam2DIncremental(Slam):
         self.images.append(self.provider.images[-1])
 
         if len(self.provider.images) == 1:
-            multi = self.provider.generateMultiImage(self.provider.images[-1])
-            image_as_array = Array.fromNumPy(InterleaveChannels(multi), TargetDim=2)
-            self.width = image_as_array.getWidth()
-            self.height = image_as_array.getHeight()
-            self.depth = image_as_array.getDepth()
-            self.dtype = image_as_array.dtype
-            # NOTE: from telemetry I'm just taking lat,lon,alt,yaw (not other stuff)
-            if self.provider.telemetry:
-                self.provider.loadTelemetry(self.provider.telemetry)
-            if not self.provider.calibration:
-                self.provider.calibration = self.provider.guessCalibration(multi)
-            self.calibration = self.provider.calibration
-            self.physic_box = None
+            self.initializeSlamImageInfo()
 
-        self.provider.loadMetadata()
-        self.provider.loadSensorCfg()
-
-        self.provider.loadLatLonAltFromMetadata()
-        self.provider.loadYawFromMetadata()
-
-        self.provider.interpolateGPS()
+        self.loadImageMetadata()
         self.provider.plane = self.provider.guessPlane()
         self.provider.setPlane(self.provider.plane)
 
-        latest_image = self.provider.images[-1]
-        latest_image.yaw += self.provider.yaw_offset
-        while latest_image.yaw > +math.pi:
-            latest_image.yaw -= 2 * math.pi
-        while latest_image.yaw < -math.pi:
-            latest_image.yaw += 2 * math.pi
-        print(latest_image.filenames[0], "yaw_radians", latest_image.yaw, "yaw_degrees", math.degrees(latest_image.yaw))
+        self.adjustImageYaw()
 
         if self.verbose:
             stop_time = time.time()
@@ -151,7 +159,7 @@ class Slam2DIncremental(Slam):
 
         band = int(image[-5]) - 1
         images = []
-        for i in range(6):
+        for i in range(5):
             if band == i:
                 images.append(image)
             else:
@@ -168,45 +176,31 @@ class Slam2DIncremental(Slam):
                 self.provider.images.pop(0)
                 return None
 
-            self.panels_found = True
+            self.loadImageMetadata()
             self.provider.findPanels()
+            self.panels_found = True
+        else:
+            self.loadImageMetadata()
+
+        if self.provider.images[-1].alt < self.alt_threshold:
+            print("Dropping image: altitude is below the threshold")
+            self.provider.images.pop()
+            return None
 
         self.images.append(self.provider.images[-1])
 
         if not self.initialized:
-            multi = self.provider.generateMultiImage(self.provider.images[-1])
-            image_as_array = Array.fromNumPy(InterleaveChannels(multi), TargetDim=2)
-            self.width = image_as_array.getWidth()
-            self.height = image_as_array.getHeight()
-            self.depth = image_as_array.getDepth()
-            self.dtype = image_as_array.dtype
-            # NOTE: from telemetry I'm just taking lat,lon,alt,yaw (not other stuff)
-            if self.provider.telemetry:
-                self.provider.loadTelemetry(self.provider.telemetry)
-            if not self.provider.calibration:
-                self.provider.calibration = self.provider.guessCalibration(multi)
-            self.calibration = self.provider.calibration
-            self.physic_box = None
+            self.initializeSlamImageInfo()
             self.initialized = True
 
-        self.provider.loadMetadata()
-        self.provider.loadSensorCfg()
-
-        self.provider.loadLatLonAltFromMetadata()
-        self.provider.loadYawFromMetadata()
-
-        self.provider.interpolateGPS()
-        # TODO: Continue debugging from here
         self.provider.plane = self.provider.guessPlane()
         self.provider.setPlane(self.provider.plane)
 
-        latest_image = self.provider.images[-1]
-        latest_image.yaw += self.provider.yaw_offset
-        while latest_image.yaw > +math.pi:
-            latest_image.yaw -= 2 * math.pi
-        while latest_image.yaw < -math.pi:
-            latest_image.yaw += 2 * math.pi
-        print(latest_image.filenames[0], "yaw_radians", latest_image.yaw, "yaw_degrees", math.degrees(latest_image.yaw))
+        if self.provider.images:
+            self.adjustImageYaw()
+            ret_val = self.provider.images[-1]
+        else:
+            ret_val = None
 
         if self.verbose:
             stop_time = time.time()
@@ -214,7 +208,7 @@ class Slam2DIncremental(Slam):
                 execution_times[func_name] = []
             execution_times[func_name].append(stop_time - start_time)
 
-        return self.provider.images[-1]
+        return ret_val
 
     def addCamera(self, image):
         func_name = "addCamera"
@@ -259,13 +253,15 @@ class Slam2DIncremental(Slam):
                 execution_times[func_name] = []
             execution_times[func_name].append(stop_time - start_time)
 
-    def getDistanceThreshold(self):
+    def getDistanceThreshold(self, x, y):
         func_name = "getDistanceThreshold"
         start_time = None
         if self.verbose:
             start_time = time.time()
 
-        self.distance_threshold = self.distance(self.cameras[0].getWorldCenter(), self.cameras[-1].getWorldCenter())
+        x_center = self.cameras[x].getWorldCenter()
+        y_center = self.cameras[y].getWorldCenter()
+        self.distance_threshold = self.distance(x_center, y_center) * 1.33
 
         if self.verbose:
             stop_time = time.time()
@@ -292,8 +288,10 @@ class Slam2DIncremental(Slam):
         if self.verbose:
             start_time = time.time()
 
-        if self.distance_threshold is None:
-            self.getDistanceThreshold()
+        if previous:
+            self.getDistanceThreshold(index, previous[0])
+        else:
+            self.getDistanceThreshold(0, -1)
 
         indices = [index]
         camera = self.cameras[index]
@@ -340,7 +338,6 @@ class Slam2DIncremental(Slam):
             start_time = time.time()
 
         self.bundleAdjustment(self.ba_tolerance)
-        self.refreshQuads()
 
         if self.verbose:
             stop_time = time.time()
@@ -583,7 +580,7 @@ class Slam2DIncremental(Slam):
         if (isinstance(self.provider, ImageProviderRedEdge)):
             # if we're using a micasense camera, create a field for each band
             for n in range(0, len(self.images[0].filenames)):
-                lines.append(f"<field name='band{n}'><code>output=voronoi()[{n}]</code></field>")
+                lines.append(f"<field name='band{n}'><code>output=ArrayUtils.split(voronoi())[{n}]</code></field>")
 
         else:
             # this is the default field
@@ -836,8 +833,8 @@ class Slam2DIncremental(Slam):
         # convert_start = time.time()
         # if we're using micasense imagery, select the band specified by the user for extraction
         if isinstance(self.provider, ImageProviderRedEdge):
-            print(f"Using band index {self.micasense_band} for extraction")
-            energy = full[:, :, self.micasense_band]
+            print(f"Using band index {self.band} for extraction")
+            energy = full[:, :, self.band]
         else:
             energy = ConvertImageToGrayScale(full)
         energy = ResizeImage(energy, self.energy_size)
@@ -926,6 +923,11 @@ class Slam2DIncremental(Slam):
             execution_times[func_name].append(stop_time - start_time)
 
         return len(matches)
+
+    def removeBadCameras(self):
+        self.removeOutlierMatches(self.max_reproj_error * self.width)
+        self.removeDisconnectedCameras()
+        self.removeCamerasWithTooMuchSkew()
 
     def generateImage(self, img):
         func_name = "generateImage"
