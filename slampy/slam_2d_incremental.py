@@ -917,6 +917,3 @@ class Slam2DIncremental(Visus.Slam):
                     file.write(f"{t},")
                 file.write("\n")
             file.close()
-
-    def save_key_points(self, camera, key_point_path):
-        pass
