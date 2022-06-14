@@ -1,3 +1,5 @@
+import numpy as np
+
 import micasense.capture
 import micasense.image
 import micasense.panel
@@ -10,7 +12,6 @@ from slampy.image_provider_generic import ImageProviderGeneric
 from slampy.image_provider_lumenera import ImageProviderLumenera
 from slampy.image_provider_micasense import ImageProviderRedEdge
 from slampy.image_provider_sequoia import ImageProviderSequoia
-from slampy.image_utils import *
 
 execution_times = {}
 
@@ -119,8 +120,9 @@ class Slam2DIncremental(Slam):
         if self.verbose:
             start_time = time.time()
 
-        multi = self.provider.generateMultiImage(self.provider.images[-1])
-        image_as_array = Array.fromNumPy(InterleaveChannels(multi), TargetDim=2)
+        multi = self.getMultiImage(self.provider.images[-1])
+        image = self.interleaveChannels(multi)
+        image_as_array = Array.fromNumPy(image, TargetDim=2)
         self.width = image_as_array.getWidth()
         self.height = image_as_array.getHeight()
         self.depth = image_as_array.getDepth()
@@ -395,23 +397,23 @@ class Slam2DIncremental(Slam):
             execution_times[func_name].append(stop_time - start_time)
 
     def distance(self, p1, p2):
-        func_name = "distance"
-        start_time = None
-        if self.verbose:
-            start_time = time.time()
+        # func_name = "distance"
+        # start_time = None
+        # if self.verbose:
+        #     start_time = time.time()
 
-        ret_val = (((p2.x-p1.x)**2)+((p2.y-p1.y)**2)+((p2.z-p1.z)**2))**(1/2)
+        ret_val = (((p2.x - p1.x)**2) + ((p2.y - p1.y)**2) + ((p2.z - p1.z)**2))**(1/2)
 
-        if self.verbose:
-            stop_time = time.time()
-            if func_name not in execution_times:
-                execution_times[func_name] = []
-            execution_times[func_name].append(stop_time - start_time)
+        # if self.verbose:
+        #     stop_time = time.time()
+        #     if func_name not in execution_times:
+        #         execution_times[func_name] = []
+        #     execution_times[func_name].append(stop_time - start_time)
 
         return ret_val
 
-    def guessLocalCamera(self):
-        func_name = "guessLocalCamera"
+    def guessLocalCameras(self):
+        func_name = "guessLocalCameras"
         start_time = None
         if self.verbose:
             start_time = time.time()
@@ -433,17 +435,15 @@ class Slam2DIncremental(Slam):
             subdiv.insert(center)
 
         cells, centers = subdiv.getVoronoiFacetList([])
-        assert (len(cells) == len(centers))
 
         # Find edges
-        edges = dict()
-        for i in range(len(cells)):
-            cell = cells[i]
+        edges = {}
+        for i, cell in enumerate(cells):
             center = (numpy.float32(centers[i][0]), numpy.float32(centers[i][1]))
             camera = find_camera[center]
 
-            for j in range(len(cell)):
-                pt0 = cell[(j + 0) % len(cell)]
+            for j, _ in enumerate(cell):
+                pt0 = cell[j % len(cell)]
                 pt1 = cell[(j + 1) % len(cell)]
                 k0 = (pt0[0], pt0[1], pt1[0], pt1[1])
                 k1 = (pt1[0], pt1[1], pt0[0], pt0[1])
@@ -456,8 +456,8 @@ class Slam2DIncremental(Slam):
                 edges[k0].add(camera)
                 edges[k1].add(camera)
 
-        for i in edges:
-            adjacent = tuple(edges[i])
+        for edge in edges:
+            adjacent = tuple(edges[edge])
             for A in range(0, len(adjacent) - 1):
                 for B in range(A + 1, len(adjacent)):
                     camera1 = adjacent[A]
@@ -465,15 +465,12 @@ class Slam2DIncremental(Slam):
                     camera1.addLocalCamera(camera2)
 
         # insert prev and next
-        n_cameras = len(self.cameras)
-        for i in range(n_cameras):
-            camera2 = self.cameras[i]
-
+        for i, camera2 in enumerate(self.cameras):
             # insert prev and next
             if (i - 1) >= 0:
                 camera2.addLocalCamera(self.cameras[i - 1])
 
-            if (i + 1) < n_cameras:
+            if (i + 1) < len(self.cameras):
                 camera2.addLocalCamera(self.cameras[i + 1])
 
         new_local_cameras = {}
@@ -496,40 +493,19 @@ class Slam2DIncremental(Slam):
         # Draw the image
         w = float(box.size()[0])
         h = float(box.size()[1])
-
         W = int(4096)
         H = int(h * (W / w))
         out = numpy.zeros((H, W, 3), dtype="uint8")
         out.fill(255)
 
-        def toScreen(p):
-            func_name2 = "toScreen"
-            start_time2 = None
-            if self.verbose:
-                start_time2 = time.time()
-
-            ret_val = [int(0 + (p[0] - box.p1[0]) * (W / w)), int(H - (p[1] - box.p1[1]) * (H / h))]
-
-            if self.verbose:
-                stop_time2 = time.time()
-                if func_name2 not in execution_times:
-                    execution_times[func_name2] = []
-                execution_times[func_name2].append(stop_time2 - start_time2)
-
-            return ret_val
-
-        for i in range(len(cells)):
-            cell = cells[i]
+        for i, cell in enumerate(cells):
             center = (numpy.float32(centers[i][0]), numpy.float32(centers[i][1]))
             camera2 = find_camera[center]
-            center = toScreen(center)
-            cell = numpy.array([toScreen(it) for it in cell], dtype=numpy.int32)
+            center = self.quadToScreen(center, box)
+            cell = numpy.array([self.quadToScreen(it, box) for it in cell], dtype=numpy.int32)
             cv2.fillConvexPoly(out, cell, [random.randint(0, 255), random.randint(0, 255), random.randint(0, 255)])
             cv2.polylines(out, [cell], True, [0, 0, 0], 3)
-            cv2.putText(out, str(camera2.id), (int(center[0]), int(center[1])), cv2.FONT_HERSHEY_COMPLEX_SMALL, 1.0,
-                        [0, 0, 0])
-
-        # SaveImage(self.cache_dir + "/~local_cameras.png", out)
+            cv2.putText(out, str(camera2.id), (center[0], center[1]), cv2.FONT_HERSHEY_COMPLEX_SMALL, 1.0, [0, 0, 0])
 
         if self.verbose:
             stop_time = time.time()
@@ -715,19 +691,19 @@ class Slam2DIncremental(Slam):
         out.fill(255)
 
         def getImageCenter(image):
-            func_name2 = "getImageCenter"
-            start_time2 = None
-            if self.verbose:
-                start_time2 = time.time()
+            # func_name2 = "getImageCenter"
+            # start_time2 = None
+            # if self.verbose:
+            #     start_time2 = time.time()
 
             p = image.quad.centroid()
             ret_val = int(0 + (p[0] - box.p1[0]) * (W / w)), int(H - (p[1] - box.p1[1]) * (H / h))
 
-            if self.verbose:
-                stop_time2 = time.time()
-                if func_name2 not in execution_times:
-                    execution_times[func_name2] = []
-                execution_times[func_name2].append(stop_time2 - start_time2)
+            # if self.verbose:
+            #     stop_time2 = time.time()
+            #     if func_name2 not in execution_times:
+            #         execution_times[func_name2] = []
+            #     execution_times[func_name2].append(stop_time2 - start_time2)
 
             return ret_val
 
@@ -775,30 +751,12 @@ class Slam2DIncremental(Slam):
         out = numpy.zeros((H, W, 4), dtype="uint8")
         out.fill(255)
 
-        def toScreen(p):
-            func_name2 = "toScreen2"
-            start_time2 = None
-            if self.verbose:
-                start_time2 = time.time()
-
-            ret_val = int(0 + (p[0] - box.p1[0]) * (W / w)), int(H - (p[1] - box.p1[1]) * (H / h))
-
-            if self.verbose:
-                stop_time2 = time.time()
-                if func_name2 not in execution_times:
-                    execution_times[func_name2] = []
-                execution_times[func_name2].append(stop_time2 - start_time2)
-
-            return ret_val
-
         for camera in self.cameras:
-            color = (
-            int(255 * camera.color.getRed()), int(255 * camera.color.getGreen()), int(255 * camera.color.getBlue()),
-            255)
-            points = numpy.array([toScreen(it) for it in camera.quad.points], dtype=numpy.int32)
+            color = (255 * camera.color.getRed(), 255 * camera.color.getGreen(), 255 * camera.color.getBlue(), 255)
+            points = numpy.array([self.quadToScreen(it, box) for it in camera.quad.points], dtype=numpy.int32)
             cv2.polylines(out, [points], True, color, 3)
-            cv2.putText(out, str(camera.id), toScreen(camera.quad.points[0]), cv2.FONT_HERSHEY_COMPLEX_SMALL, 1.0,
-                        color)
+            org = self.quadToScreen(camera.quad.points[0], box)
+            cv2.putText(out, str(camera.id), org, cv2.FONT_HERSHEY_COMPLEX_SMALL, 1.0, color)
 
         SaveImage(GuessUniqueFilename(self.cache_dir + "/~solution%d.png"), out)
 
@@ -808,8 +766,28 @@ class Slam2DIncremental(Slam):
                 execution_times[func_name] = []
             execution_times[func_name].append(stop_time - start_time)
 
-    def convertAndExtract(self):
-        func_name = "convertAndExtract"
+    def quadToScreen(self, p, box):
+        func_name2 = "quadToScreen"
+        start_time2 = None
+        if self.verbose:
+            start_time2 = time.time()
+
+        w = float(box.size()[0])
+        h = float(box.size()[1])
+        W = int(4096)
+        H = int(h * (W / w))
+        ret_val = int(0 + (p[0] - box.p1[0]) * (W / w)), int(H - (p[1] - box.p1[1]) * (H / h))
+
+        if self.verbose:
+            stop_time2 = time.time()
+            if func_name2 not in execution_times:
+                execution_times[func_name2] = []
+            execution_times[func_name2].append(stop_time2 - start_time2)
+
+        return ret_val
+
+    def extractKeyPoints(self):
+        func_name = "extractKeyPoints"
         start_time = None
         if self.verbose:
             start_time = time.time()
@@ -822,16 +800,13 @@ class Slam2DIncremental(Slam):
         if not self.extractor:
             self.extractor = ExtractKeyPoints(self.min_num_keypoints, self.max_num_keypoints, self.anms, self.extractor_method)
 
-        if self.enable_color_matching:
-            color_matching_ref = None
-
         print(f"extraction time in ms: {(time.time() - extraction_start) * 1000}")
 
-        # create idx and extract keypoints
-        keypoint_path = f"{self.cache_dir}/keypoints/{camera.id}"
+        # Create idx and extract key points
+        key_point_path = f"{self.cache_dir}/keypoints/{camera.id}"
         idx_path = f"{self.cache_dir}/{camera.idx_filename}"
 
-        if not self.debug_mode and self.loadKeyPoints(camera, keypoint_path) and os.path.isfile(idx_path) and os.path.isfile(idx_path.replace(".idx", ".bin")):
+        if not self.debug_mode and self.loadKeyPoints(camera, key_point_path) and os.path.isfile(idx_path) and os.path.isfile(idx_path.replace(".idx", ".bin")):
             print("Keypoints already stored and idx generated: ", img.filenames[0])
             print(f"Done {camera.filenames[0]}")
 
@@ -841,56 +816,49 @@ class Slam2DIncremental(Slam):
             execution_times[func_name].append(stop_time - start_time)
             return
 
-        generate_start = time.time()
-        full = self.generateImage(img)
-        print(f"Generated in: {(time.time() - generate_start) * 1000} ms")
+        multi = self.getMultiImage(img)
+        image = self.interleaveChannels(multi)
 
-        # Match Histograms
-        if self.enable_color_matching:
-            if color_matching_ref:
-                print("Doing color matching...")
-                MatchHistogram(full, color_matching_ref)
-            else:
-                color_matching_ref = full
+        # # Match Histograms
+        # if self.enable_color_matching:
+        #     color_matching_ref = None
+        #     if color_matching_ref:
+        #         print("Doing color matching...")
+        #         MatchHistogram(image, color_matching_ref)
+        #     else:
+        #         color_matching_ref = image
 
-        dataset_start = time.time()
         data = LoadDataset(idx_path)
-        # slow: first write then compress
-        data.write(full)
-        # dataset.compressDataset(["lz4"],Array.fromNumPy(full,TargetDim=2, bShareMem=True)) # write zipped full
-        # fast: compress in-place
-        # ,"jpg-JPEG_QUALITYGOOD-JPEG_SUBSAMPLING_420-JPEG_OPTIMIZE" ,"jpg-JPEG_QUALITYGOOD-JPEG_SUBSAMPLING_420-JPEG_OPTIMIZE","jpg-JPEG_QUALITYGOOD-JPEG_SUBSAMPLING_420-JPEG_OPTIMIZE"]
+        data.write(image)
+
         # write zipped full
         # data.compressDataset(["lz4"], Array.fromNumPy(full, TargetDim=2, bShareMem=True))
-        print(f"Dataset write time: {(time.time() - dataset_start) * 1000} ms")
 
-        # convert_start = time.time()
         # if we're using micasense imagery, select the band specified by the user for extraction
-        if isinstance(self.provider, ImageProviderRedEdge):
+        if self.multiband:
             print(f"Using band index {self.band} for extraction")
-            energy = full[:, :, self.band]
+            energy = image[:, :, self.band]
         else:
-            energy = ConvertImageToGrayScale(full)
+            energy = ConvertImageToGrayScale(image)
+
         energy = ResizeImage(energy, self.energy_size)
-        (keypoints, descriptors) = self.extractor.doExtract(energy)
+        (key_points, descriptors) = self.extractor.doExtract(energy)
 
         vs = self.width / float(energy.shape[1])
-        if keypoints:
-            camera.keypoints.reserve(len(keypoints))
-            for keypoint in keypoints:
-                kp = KeyPoint(vs * keypoint.pt[0], vs * keypoint.pt[1], keypoint.size, keypoint.angle, keypoint.response, keypoint.octave, keypoint.class_id)
+        if key_points:
+            camera.keypoints.reserve(len(key_points))
+            for p in key_points:
+                kp = KeyPoint(vs * p.pt[0], vs * p.pt[1], p.size, p.angle, p.response, p.octave, p.class_id)
                 camera.keypoints.push_back(kp)
             camera.descriptors = Array.fromNumPy(descriptors, TargetDim=2)
 
-        self.saveKeyPoints(camera, keypoint_path)
+        self.saveKeyPoints(camera, key_point_path)
 
         energy = cv2.cvtColor(energy, cv2.COLOR_GRAY2RGB)
-        for keypoint in keypoints:
-            cv2.drawMarker(energy, (int(keypoint.pt[0]), int(keypoint.pt[1])), (0, 255, 255), cv2.MARKER_CROSS, 5)
+        for p in key_points:
+            cv2.drawMarker(energy, (int(p.pt[0]), int(p.pt[1])), (0, 255, 255), cv2.MARKER_CROSS, 5)
         energy = cv2.flip(energy, 0)
         energy = ConvertImageToUint8(energy)
-        # convert_stop = time.time()
-        # print(f"Convert time: {(convert_stop - convert_start) * 1000} ms")
         self.showEnergy(camera, energy)
 
         print(f"Done converting and extracting {camera.filenames[0]}")
@@ -963,14 +931,35 @@ class Slam2DIncremental(Slam):
         self.removeDisconnectedCameras()
         self.removeCamerasWithTooMuchSkew()
 
-    def generateImage(self, img):
-        func_name = "generateImage"
+    def getMultiImage(self, img):
+        func_name = "getMultiImage"
         start_time = None
         if self.verbose:
             start_time = time.time()
 
         print("Generating image", img.filenames[0])
-        image = InterleaveChannels(self.provider.generateMultiImage(img))
+        image = self.provider.generateMultiImage(img)
+
+        if self.verbose:
+            stop_time = time.time()
+            if func_name not in execution_times:
+                execution_times[func_name] = []
+            execution_times[func_name].append(stop_time - start_time)
+
+        return image
+
+    def interleaveChannels(self, multi):
+        func_name = "interleaveChannels"
+        start_time = None
+        if self.verbose:
+            start_time = time.time()
+
+        if len(multi) == 1:
+            return multi[0]
+
+        image = numpy.zeros(multi[0].shape + (len(multi),), dtype=multi[0].dtype)
+        for i, channel in enumerate(multi):
+            image[..., i] = channel
 
         if self.verbose:
             stop_time = time.time()
@@ -981,7 +970,7 @@ class Slam2DIncremental(Slam):
         return image
 
 
-# Compose a new image from two provided components on a given axis.
+    # Compose a new image from two provided components on a given axis.
 def ComposeImage(layers, axis):
     func_name = "composeImage"
     start_time = time.time()
