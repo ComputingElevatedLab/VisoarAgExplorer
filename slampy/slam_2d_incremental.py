@@ -1,4 +1,3 @@
-import json
 import math
 import os.path
 import random
@@ -62,6 +61,7 @@ class Slam2DIncremental(Visus.Slam):
         self.vs = None
         self.distance_threshold = np.inf
         self.previous_yaw = None
+        self.reader = MetadataReader()
 
         # Initialize the image provider
         self.alt_threshold = alt_threshold
@@ -124,6 +124,7 @@ class Slam2DIncremental(Visus.Slam):
         self.provider.addImage(image_bands)
 
         if not self.panels_found:
+            self.load_metadata(self.provider.images[-1])
             panel = micasense.panel.Panel(micasense.image.Image(image_bands[0]))
             if panel.panel_detected():
                 return None
@@ -132,7 +133,6 @@ class Slam2DIncremental(Visus.Slam):
                 self.provider.images.pop(0)
                 return None
 
-            self.load_image_metadata(self.provider.images[-1])
             self.provider.findPanels()
             self.panels_found = True
 
@@ -168,14 +168,10 @@ class Slam2DIncremental(Visus.Slam):
         if self.verbose:
             start_time = time.time()
 
-        self.provider.loadMetadata()
-        self.provider.loadLatLonAltFromMetadata()
-        self.provider.loadYawFromMetadata()
-        self.provider.interpolateGPS()
-        # self.load_metadata(image)
-        # self.load_gps_from_metadata(image)
-        # self.load_yaw_from_metadata(image)
-        # self.interpolate_gps()
+        self.load_metadata(image)
+        self.load_gps_from_metadata(image)
+        self.load_yaw_from_metadata(image)
+        self.interpolate_gps()
 
         if self.verbose:
             stop_time = time.time()
@@ -183,16 +179,14 @@ class Slam2DIncremental(Visus.Slam):
                 self.execution_times[func_name] = []
             self.execution_times[func_name].append(stop_time - start_time)
 
-    def load_metadata(self, image, band=0):
+    def load_metadata(self, image):
         func_name = "load_metadata"
         start_time = None
         if self.verbose:
             start_time = time.time()
 
-        reader = MetadataReader()
-        filename = image.filenames[band]
-        image.metadata = reader.readMetadata(filename)
-        reader.close()
+        filename = image.filenames[self.extraction_band]
+        image.metadata = self.reader.readMetadata(filename)
 
         if self.verbose:
             stop_time = time.time()
@@ -224,7 +218,7 @@ class Slam2DIncremental(Visus.Slam):
         image.lon = float(image.metadata[lon])
         image.alt = float(image.metadata[alt])
 
-        print(f"Found lat = {image.lat}, lon = {image.lon}, alt = {image.alt}")
+        print(f"lat = {image.lat}, lon = {image.lon}, alt = {image.alt}")
 
         if self.verbose:
             stop_time = time.time()
@@ -244,7 +238,7 @@ class Slam2DIncremental(Visus.Slam):
 
         if yaw in image.metadata:
             image.yaw = float(image.metadata[yaw])
-            print(f"Found yaw = {image.yaw}")
+            print(f"yaw = {image.yaw}")
         else:
             image.yaw = self.previous_yaw
             print(f"Did not find a yaw value, using the previous yaw={self.previous_yaw}")
@@ -308,7 +302,7 @@ class Slam2DIncremental(Visus.Slam):
 
         self.lat0 = image.lat
         self.lon0 = image.lon
-        self.plane = self.provider.guessPlane()
+        self.plane = self.guess_plane(image)
 
         self.provider.loadSensorCfg()
 
@@ -366,9 +360,7 @@ class Slam2DIncremental(Visus.Slam):
         if len(multi_image) == 1:
             return multi_image[0]
 
-        interleaved_image = np.zeros(multi_image[0].shape + (len(multi_image),), dtype=multi_image[0].dtype)
-        for i, channel in enumerate(multi_image):
-            interleaved_image[..., i] = channel
+        interleaved_image = np.dstack(multi_image)
 
         if self.verbose:
             stop_time = time.time()
@@ -377,6 +369,21 @@ class Slam2DIncremental(Visus.Slam):
             self.execution_times[func_name].append(stop_time - start_time)
 
         return interleaved_image
+
+    def guess_plane(self, image):
+        if self.multi_band:
+            print(f"Guessing plane from micasense panels")
+            alt = img_utils.FindMetadata(image.metadata, ["GPSAltitude"])
+            if alt:
+                return np.min([float(panel.metadata[alt]) for panel in self.provider.panels])
+
+        abs = img_utils.FindMetadata(image.metadata, ["AbsoluteAltitude", "GPSAltitude"])
+        rel = img_utils.FindMetadata(image.metadata, ["RelativeAltitude", "GPSAltitudeRef"])
+
+        if abs and rel:
+            return float(image.metadata[abs]) - float(image.metadata[rel])
+
+        return 0
 
     def adjust_image_yaw(self, image):
         func_name = "adjust_image_yaw"
@@ -650,7 +657,6 @@ class Slam2DIncremental(Visus.Slam):
             start_time = time.time()
 
         self.bundleAdjustment(self.ba_tolerance)
-        self.refresh_quads()
 
         if self.verbose:
             stop_time = time.time()
@@ -902,17 +908,6 @@ class Slam2DIncremental(Visus.Slam):
         # Create idx and extract key points
         key_point_path = f"{self.cache_dir}/key_points/{camera.id}"
         idx_path = f"{self.cache_dir}/{camera.idx_filename}"
-        bin_path = idx_path[:-3] + "bin"
-
-        # if not self.debug_mode and super().loadKeyPoints(camera, key_point_path) and os.path.isfile(idx_path) and os.path.isfile(idx_path.replace(".idx", ".bin")):
-        #     print("Key points already stored and idx generated: ", image.filenames[0])
-        #     print(f"Done {camera.filenames[0]}")
-        #
-        #     stop_time = time.time()
-        #     if func_name not in self.execution_times:
-        #         self.execution_times[func_name] = []
-        #     self.execution_times[func_name].append(stop_time - start_time)
-        #     return
 
         if self.initial_multi_image:
             multi_image = self.initial_multi_image
@@ -920,15 +915,6 @@ class Slam2DIncremental(Visus.Slam):
         else:
             multi_image = self.generate_multi_image(image)
         interleaved_image = self.interleave_channels(multi_image)
-
-        # # Match Histograms
-        # if self.enable_color_matching:
-        #     color_matching_ref = None
-        #     if color_matching_ref:
-        #         print("Doing color matching...")
-        #         MatchHistogram(image, color_matching_ref)
-        #     else:
-        #         color_matching_ref = image
 
         data = Visus.LoadDataset(idx_path)
         #data.write(interleaved_image)
@@ -956,15 +942,6 @@ class Slam2DIncremental(Visus.Slam):
                 camera.keypoints.push_back(kp)
             camera.descriptors = Visus.Array.fromNumPy(descriptors, TargetDim=2)
             super().saveKeyPoints(camera, key_point_path)
-
-        # energy = cv2.cvtColor(energy, cv2.COLOR_GRAY2RGB)
-        # for p in key_points:
-        #     cv2.drawMarker(energy, (int(p.pt[0]), int(p.pt[1])), (0, 255, 255), cv2.MARKER_CROSS, 5)
-        # energy = cv2.flip(energy, 0)
-        # energy = img_utils.ConvertImageToUint8(energy)
-
-        # if self.debug_mode:
-        #     img_utils.SaveImage(f"{self.cache_dir}/energy/{camera.id:04d}.tif", energy)
 
         print(f"Done converting and extracting {camera.filenames[0]}")
 
@@ -994,27 +971,6 @@ class Slam2DIncremental(Visus.Slam):
                                         camera2.id, [(k.x, k.y) for k in camera2.keypoints],
                                         Visus.Array.toNumPy(camera2.descriptors),
                                         self.max_reprojection_error * self.width, self.ratio_check)
-
-        if self.debug_mode and H21 is not None and len(matches) > 0:
-            points1 = [(k.x, k.y) for k in camera1.keypoints]
-            points2 = [(k.x, k.y) for k in camera2.keypoints]
-
-            a = Visus.Array.toNumPy(Visus.ArrayUtils.loadImage(f"{self.cache_dir}/energy/{camera1.id}.tif"))
-            b = Visus.Array.toNumPy(Visus.ArrayUtils.loadImage(f"{self.cache_dir}/energy/{camera2.id}.tif"))
-            a = cv2.cvtColor(a, cv2.COLOR_RGB2GRAY)
-            b = cv2.cvtColor(b, cv2.COLOR_RGB2GRAY)
-
-            DebugMatches(
-                f"{self.cache_dir}/debug_matches/{err if err else 'good'}/{camera1.id}.{camera2.id}.{len(matches)}.png",
-                self.width,
-                self.height,
-                a,
-                [points1[match.queryIdx] for match in matches],
-                H21,
-                b,
-                [points2[match.trainIdx] for match in matches],
-                np.identity(3, dtype='float32')
-            )
 
         if err:
             camera2.getEdge(camera1).setMatches([], err)
