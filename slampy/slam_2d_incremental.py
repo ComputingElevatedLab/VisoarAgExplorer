@@ -12,6 +12,7 @@ import micasense.panel
 import OpenVisus as Visus
 import slampy.image_provider as img_utils
 
+from rtree import index
 from slampy.extract_keypoints import ExtractKeyPoints
 from slampy.find_matches import FindMatches, DebugMatches
 from slampy.gps_utils import GPSUtils
@@ -39,11 +40,11 @@ class Slam2DIncremental(Visus.Slam):
         self.energy_size = None
         self.min_key_points = 1800
         self.max_key_points = 5000
-        self.anms = 500
+        self.anms = 250
         self.max_reprojection_error = 0.01
         self.ratio_check = 0.8
         self.calibration.bFixed = False
-        self.ba_tolerance = 0.0001
+        self.ba_tolerance = 0.00001
         self.extractor = ExtractKeyPoints(self.min_key_points, self.max_key_points, self.anms, extractor)
         self.physic_box = None
         self.enable_svg = True
@@ -62,6 +63,8 @@ class Slam2DIncremental(Visus.Slam):
         self.distance_threshold = np.inf
         self.previous_yaw = None
         self.reader = MetadataReader()
+        self.idx = index.Index()
+        self.coordinates = {}
 
         # Initialize the image provider
         self.alt_threshold = alt_threshold
@@ -316,9 +319,9 @@ class Slam2DIncremental(Visus.Slam):
         self.dtype = image_as_array.dtype
 
         # Used to resize all incoming images
-        scale = 5
-        energy_width = int(self.width / scale)
-        energy_height = int(self.height / scale)
+        scale = 1 / 5
+        energy_width = int(self.width * scale)
+        energy_height = int(self.height * scale)
         self.energy_size = (energy_width, energy_height)
 
         # NOTE: from telemetry I'm just taking lat,lon,alt,yaw (not other stuff)
@@ -595,6 +598,49 @@ class Slam2DIncremental(Visus.Slam):
             if func_name not in self.execution_times:
                 self.execution_times[func_name] = []
             self.execution_times[func_name].append(stop_time - start_time)
+
+    def insert_camera_into_spatial_index(self, camera):
+        func_name = "insert_camera_into_spatial_index"
+        start_time = None
+        if self.verbose:
+            start_time = time.time()
+
+        box = camera.quad.getBoundingBox()
+        self.coordinates[camera.id] = (box.p1[0], box.p1[1], box.p2[0], box.p2[1])
+        self.idx.insert(camera.id, self.coordinates[camera.id])
+
+        if self.verbose:
+            stop_time = time.time()
+            if func_name not in self.execution_times:
+                self.execution_times[func_name] = []
+            self.execution_times[func_name].append(stop_time - start_time)
+
+    def get_intersecting_indices(self, at):
+        func_name = "get_intersecting_indices"
+        start_time = None
+        if self.verbose:
+            start_time = time.time()
+
+        camera = self.cameras[at]
+        camera.bFixed = False
+        indices = list(self.idx.intersection(self.coordinates[camera.id]))
+        for i, other_camera in enumerate(self.cameras):
+            if i == camera.id:
+                continue
+            elif i in indices:
+                self.find_matches(camera, other_camera)
+                other_camera.color = camera.color
+                other_camera.bFixed = False
+            else:
+                other_camera.bFixed = True
+
+        if self.verbose:
+            stop_time = time.time()
+            if func_name not in self.execution_times:
+                self.execution_times[func_name] = []
+            self.execution_times[func_name].append(stop_time - start_time)
+
+        return indices
 
     def get_local_ba_indices(self, index, previous):
         func_name = "get_local_ba_indices"
