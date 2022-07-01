@@ -40,7 +40,7 @@ class Slam2DIncremental(Visus.Slam):
         self.energy_size = None
         self.min_key_points = 1800
         self.max_key_points = 5000
-        self.anms = 250
+        self.anms = 200
         self.max_reprojection_error = 0.01
         self.ratio_check = 0.8
         self.calibration.bFixed = False
