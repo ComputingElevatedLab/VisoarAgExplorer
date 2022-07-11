@@ -6,7 +6,7 @@ import time
 
 import cv2
 import numpy as np
-from rtree import index
+from rtree import index as rtindex
 
 import OpenVisus as Visus
 import micasense.capture
@@ -38,13 +38,13 @@ class Slam2DIncremental(Visus.Slam):
         os.makedirs(self.cache_dir, exist_ok=True)
         self.debug_mode = False
         self.energy_size = None
-        self.min_key_points = 1800
-        self.max_key_points = 5000
-        self.anms = 350
+        self.min_key_points = 1000
+        self.max_key_points = 3000
+        self.anms = 300
         self.max_reprojection_error = 0.01
         self.ratio_check = 0.8
         self.calibration.bFixed = False
-        self.ba_tolerance = 0.00001
+        self.ba_tolerance = 0.01
         self.extractor = ExtractKeyPoints(self.min_key_points, self.max_key_points, self.anms, extractor)
         self.physic_box = None
         self.enable_svg = True
@@ -63,7 +63,7 @@ class Slam2DIncremental(Visus.Slam):
         self.distance_threshold = np.inf
         self.previous_yaw = None
         self.reader = MetadataReader()
-        self.idx = index.Index()
+        self.idx = rtindex.Index()
         self.coordinates = {}
 
         # Initialize the image provider
@@ -117,11 +117,11 @@ class Slam2DIncremental(Visus.Slam):
             else:
                 ith_band_path = image_path[:-5] + str(i + 1) + image_path[-4:]
                 image_bands.append(ith_band_path)
-        self.provider.addImage(image_bands)
 
         if not self.panels_found:
+            self.provider.addImage(image_bands)
             self.load_metadata(self.provider.images[-1])
-            panel = micasense.panel.Panel(micasense.image.Image(image_bands[0]))
+            panel = micasense.panel.Panel(micasense.image.Image(image_path))
             if panel.panel_detected():
                 return None
 
@@ -130,7 +130,10 @@ class Slam2DIncremental(Visus.Slam):
                 return None
 
             self.provider.findPanels()
+            self.provider.images[-1].filenames = [image_path]
             self.panels_found = True
+        else:
+            self.provider.addImage([image_path])
 
         if not self.provider.images:
             return None
@@ -148,7 +151,7 @@ class Slam2DIncremental(Visus.Slam):
             self.initialized = True
 
         image.alt -= self.plane
-        self.adjust_image_yaw(image)
+        # self.adjust_image_yaw(image)
 
         if self.verbose:
             self.log_execution_time(inspect.currentframe().f_code.co_name, time.time() - start_time)
@@ -162,7 +165,8 @@ class Slam2DIncremental(Visus.Slam):
         self.load_metadata(image)
         self.load_gps_from_metadata(image)
         self.load_yaw_from_metadata(image)
-        self.interpolate_gps()
+        if not self.multi_band:
+            self.interpolate_gps()
 
         if self.verbose:
             self.log_execution_time(inspect.currentframe().f_code.co_name, time.time() - start_time)
@@ -171,7 +175,8 @@ class Slam2DIncremental(Visus.Slam):
         if self.verbose:
             start_time = time.time()
 
-        filename = image.filenames[self.extraction_band]
+        # filename = image.filenames[self.extraction_band]
+        filename = image.filenames[0]
         image.metadata = self.reader.readMetadata(filename)
 
         if self.verbose:
@@ -220,9 +225,13 @@ class Slam2DIncremental(Visus.Slam):
             print(f"Did not find a yaw value, using the previous yaw={self.previous_yaw}")
 
         # Convert the yaw to radians if necessary
-        if yaw and "radians" not in yaw.lower():
-            if "degrees" in yaw.lower():
-                image.yaw = np.radians(image.yaw)
+        if self.multi_band:
+            if image.yaw < 0:
+                image.yaw += np.pi * (47 / 24)
+            else:
+                image.yaw -= np.pi / 18
+        elif yaw and "radians" not in yaw.lower():
+            image.yaw = np.radians(image.yaw)
 
         if self.verbose:
             self.log_execution_time(inspect.currentframe().f_code.co_name, time.time() - start_time)
@@ -531,7 +540,8 @@ class Slam2DIncremental(Visus.Slam):
 
         camera = self.cameras[at]
         camera.bFixed = False
-        indices = list(self.idx.intersection(self.coordinates[camera.id]))
+        indices = list(set(self.idx.intersection(self.coordinates[camera.id])))
+
         for i, other_camera in enumerate(self.cameras):
             if i == camera.id:
                 continue
@@ -547,6 +557,38 @@ class Slam2DIncremental(Visus.Slam):
             self.log_execution_time(inspect.currentframe().f_code.co_name, stop_time - start_time)
 
         return indices
+
+    def find_all_matches(self, at, indices):
+        if self.verbose:
+            start_time = time.time()
+
+        for i, v in enumerate(indices):
+            if v == at:
+                continue
+            camera_i = self.cameras[v]
+            for k in range(i + 1, len(indices)):
+                j = indices[k]
+                if j == at:
+                    continue
+                camera_j = self.cameras[j]
+                self.find_matches(camera_i, camera_j)
+
+        if self.verbose:
+            stop_time = time.time()
+            self.log_execution_time(inspect.currentframe().f_code.co_name, stop_time - start_time)
+
+    def refresh_spatial_index(self, indices):
+        if self.verbose:
+            start_time = time.time()
+
+        for i in indices:
+            camera = self.cameras[i]
+            self.idx.delete(camera.id, self.coordinates[camera.id])
+            self.insert_camera_into_spatial_index(camera)
+
+        if self.verbose:
+            stop_time = time.time()
+            self.log_execution_time(inspect.currentframe().f_code.co_name, stop_time - start_time)
 
     def get_local_ba_indices(self, at, previous):
         if self.verbose:
@@ -654,11 +696,11 @@ class Slam2DIncremental(Visus.Slam):
                      Visus.cstring(self.calibration.cy)), ""]
 
         # If we're using a micasense camera, create a field for each band
-        if self.multi_band:
-            for i, _ in enumerate(self.provider.images[0].filenames):
-                lines.append(f"<field name='band{i}'><code>output=ArrayUtils.split(voronoi())[{i}]</code></field>")
-        else:
-            lines.append("<field name='blend'><code>output=voronoi()</code></field>")
+        # if self.multi_band:
+        #     for i in range(5):
+        #         lines.append(f"<field name='band{i}'><code>output=ArrayUtils.split(voronoi())[{i}]</code></field>")
+        # else:
+        lines.append("<field name='blend'><code>output=voronoi()</code></field>")
 
         lines.append("")
 
@@ -845,7 +887,10 @@ class Slam2DIncremental(Visus.Slam):
         # if we're using micasense imagery, select the band specified by the user for extraction
         if self.multi_band:
             print(f"Using band index {self.extraction_band} for extraction")
-            energy = interleaved_image[:, :, self.extraction_band]
+            if interleaved_image.ndim > 2:
+                energy = interleaved_image[:, :, self.extraction_band]
+            else:
+                energy = interleaved_image
         else:
             energy = cv2.cvtColor(interleaved_image, cv2.COLOR_RGB2GRAY)
 
