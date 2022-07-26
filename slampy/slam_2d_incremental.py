@@ -182,10 +182,7 @@ class Slam2DIncremental(Visus.Slam):
         if self.verbose:
             start_time = time.time()
 
-        if len(image.filenames) > 1:
-            filename = image.filenames[self.extraction_band - 1]
-        else:
-            filename = image.filenames[0]
+        filename = image.filenames[0]
         image.metadata = self.reader.readMetadata(filename)
 
         if self.verbose:
@@ -875,13 +872,9 @@ class Slam2DIncremental(Visus.Slam):
 
         return ret_val
 
-    def extract_key_points(self, image, camera):
+    def interleave_and_write_image(self, image, camera):
         if self.verbose:
             start_time = time.time()
-
-        # Create idx and extract key points
-        key_point_path = f"{self.cache_dir}/key_points/{camera.id}"
-        idx_path = f"{self.cache_dir}/{camera.idx_filename}"
 
         if self.initial_multi_image:
             interleaved_image = self.initial_interleaved_image
@@ -891,18 +884,24 @@ class Slam2DIncremental(Visus.Slam):
             multi_image = self.generate_multi_image(image)
             interleaved_image = self.interleave_channels(multi_image)
 
-        data = Visus.LoadDataset(idx_path)
-        #data.write(interleaved_image)
+        data = Visus.LoadDataset(f"{self.cache_dir}/{camera.idx_filename}")
+        data.write(interleaved_image)
 
-        # write zipped full
-        data.compressDataset(["lz4"], Visus.Array.fromNumPy(interleaved_image, TargetDim=2, bShareMem=True))
+        if self.verbose:
+            self.log_execution_time(inspect.currentframe().f_code.co_name, time.time() - start_time)
+
+        return interleaved_image
+
+    def extract_key_points(self, interleaved_image, camera):
+        if self.verbose:
+            start_time = time.time()
 
         # if we're using micasense imagery, select the band specified by the user for extraction
         if self.multi_band:
             if not self.extraction_band and interleaved_image.ndim > 2:
-                print(f"Using band index {self.extraction_band} for extraction")
-                energy = interleaved_image[:, :, self.extraction_band]
+                energy = interleaved_image[:, :, 0:4]
             else:
+                print(f"Using band index {self.extraction_band} for extraction")
                 energy = interleaved_image
         else:
             energy = cv2.cvtColor(interleaved_image, cv2.COLOR_RGB2GRAY)
@@ -919,7 +918,7 @@ class Slam2DIncremental(Visus.Slam):
                 kp = Visus.KeyPoint(self.vs * p.pt[0], self.vs * p.pt[1], p.size, p.angle, p.response, p.octave, p.class_id)
                 camera.keypoints.push_back(kp)
             camera.descriptors = Visus.Array.fromNumPy(descriptors, TargetDim=2)
-            super().saveKeyPoints(camera, key_point_path)
+            super().saveKeyPoints(camera, f"{self.cache_dir}/key_points/{camera.id}")
 
         print(f"Done converting and extracting {camera.filenames[0]}")
 
