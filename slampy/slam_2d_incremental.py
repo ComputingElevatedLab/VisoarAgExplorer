@@ -41,6 +41,9 @@ class Slam2DIncremental(Visus.Slam):
         self.min_key_points = 1000
         self.max_key_points = 3000
         self.anms = 300
+        if extraction_band == 6:
+            self.min_key_points = 100
+            self.max_key_points = 300
         self.max_reprojection_error = 0.01
         self.ratio_check = 0.8
         self.calibration.bFixed = False
@@ -52,10 +55,11 @@ class Slam2DIncremental(Visus.Slam):
         self.do_bundle_adjustment = True
 
         self.execution_times = {}
-        self.extraction_band = extraction_band
+        self.extraction_band = extraction_band if extraction_band >= 1 else None
         self.verbose = verbose
         self.world_centers = {}
         self.initial_multi_image = None
+        self.initial_interleaved_image = None
         self.lat0 = None
         self.lon0 = None
         self.plane = None
@@ -109,19 +113,19 @@ class Slam2DIncremental(Visus.Slam):
         if self.verbose:
             start_time = time.time()
 
-        band = int(image_path[-5]) - 1
+        band = int(image_path[-5])
         image_bands = []
-        for i in range(5):
+        for i in range(1, 7):
             if band == i:
                 image_bands.append(image_path)
             else:
-                ith_band_path = image_path[:-5] + str(i + 1) + image_path[-4:]
+                ith_band_path = image_path[:-5] + str(i) + image_path[-4:]
                 image_bands.append(ith_band_path)
 
         if not self.panels_found:
             self.provider.addImage(image_bands)
             self.load_metadata(self.provider.images[-1])
-            panel = micasense.panel.Panel(micasense.image.Image(image_path))
+            panel = micasense.panel.Panel(micasense.image.Image(image_bands[0]))
             if panel.panel_detected():
                 return None
 
@@ -130,10 +134,13 @@ class Slam2DIncremental(Visus.Slam):
                 return None
 
             self.provider.findPanels()
-            self.provider.images[-1].filenames = [image_path]
+            if self.extraction_band:
+                self.provider.images[-1].filenames = [image_bands[self.extraction_band - 1]]
             self.panels_found = True
-        else:
+        elif self.extraction_band:
             self.provider.addImage([image_path])
+        else:
+            self.provider.addImage(image_bands)
 
         if not self.provider.images:
             return None
@@ -175,8 +182,10 @@ class Slam2DIncremental(Visus.Slam):
         if self.verbose:
             start_time = time.time()
 
-        # filename = image.filenames[self.extraction_band]
-        filename = image.filenames[0]
+        if len(image.filenames) > 1:
+            filename = image.filenames[self.extraction_band - 1]
+        else:
+            filename = image.filenames[0]
         image.metadata = self.reader.readMetadata(filename)
 
         if self.verbose:
@@ -282,8 +291,8 @@ class Slam2DIncremental(Visus.Slam):
         self.provider.loadSensorCfg()
 
         self.initial_multi_image = self.generate_multi_image(image)
-        interleaved_image = self.interleave_channels(self.initial_multi_image)
-        image_as_array = Visus.Array.fromNumPy(interleaved_image, TargetDim=2)
+        self.initial_interleaved_image = self.interleave_channels(self.initial_multi_image)
+        image_as_array = Visus.Array.fromNumPy(self.initial_interleaved_image, TargetDim=2)
 
         self.width = image_as_array.getWidth()
         self.height = image_as_array.getHeight()
@@ -291,9 +300,12 @@ class Slam2DIncremental(Visus.Slam):
         self.dtype = image_as_array.dtype
 
         # Used to resize all incoming images
-        scale = 1 / 5
+        scale = 0.2
+        if self.extraction_band == 6:
+            scale = 2
         energy_width = int(self.width * scale)
         energy_height = int(self.height * scale)
+        # self.vs = self.width / float(energy_height)
         self.energy_size = (energy_width, energy_height)
 
         # NOTE: from telemetry I'm just taking lat,lon,alt,yaw (not other stuff)
@@ -696,11 +708,11 @@ class Slam2DIncremental(Visus.Slam):
                      Visus.cstring(self.calibration.cy)), ""]
 
         # If we're using a micasense camera, create a field for each band
-        # if self.multi_band:
-        #     for i in range(5):
-        #         lines.append(f"<field name='band{i}'><code>output=ArrayUtils.split(voronoi())[{i}]</code></field>")
-        # else:
-        lines.append("<field name='blend'><code>output=voronoi()</code></field>")
+        if self.multi_band and not self.extraction_band:
+            for i in range(5):
+                lines.append(f"<field name='band{i}'><code>output=ArrayUtils.split(voronoi())[{i}]</code></field>")
+        else:
+            lines.append("<field name='blend'><code>output=voronoi()</code></field>")
 
         lines.append("")
 
@@ -713,7 +725,7 @@ class Slam2DIncremental(Visus.Slam):
         lines.append("")
 
         if self.enable_svg:
-            W = int(1024)
+            W = int(1048)
             H = int(W * (logic_box.size()[1] / float(logic_box.size()[0])))
 
             lines.append("<svg width='%s' height='%s' viewBox='%s %s %s %s' >" % (
@@ -872,11 +884,12 @@ class Slam2DIncremental(Visus.Slam):
         idx_path = f"{self.cache_dir}/{camera.idx_filename}"
 
         if self.initial_multi_image:
-            multi_image = self.initial_multi_image
+            interleaved_image = self.initial_interleaved_image
             self.initial_multi_image = None
+            self.initial_interleaved_image = None
         else:
             multi_image = self.generate_multi_image(image)
-        interleaved_image = self.interleave_channels(multi_image)
+            interleaved_image = self.interleave_channels(multi_image)
 
         data = Visus.LoadDataset(idx_path)
         #data.write(interleaved_image)
@@ -886,8 +899,8 @@ class Slam2DIncremental(Visus.Slam):
 
         # if we're using micasense imagery, select the band specified by the user for extraction
         if self.multi_band:
-            print(f"Using band index {self.extraction_band} for extraction")
-            if interleaved_image.ndim > 2:
+            if not self.extraction_band and interleaved_image.ndim > 2:
+                print(f"Using band index {self.extraction_band} for extraction")
                 energy = interleaved_image[:, :, self.extraction_band]
             else:
                 energy = interleaved_image
