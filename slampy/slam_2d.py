@@ -387,7 +387,19 @@ class Slam2D(Slam):
 			x,y=GPSUtils.gpsToLocalCartesian(lat,lon,lat0,lon0)
 			world_center=Point3d(x,y,alt)
 			img=self.images[I]
-			q = Quaternion(Point3d(0, 0, 1), -img.yaw) *  Quaternion(Point3d(1, 0, 0), math.pi)
+			# TODO: figure out if micasense needs old way or new one?
+
+			q = Quaternion(Point3d(0, 0, 1), -img.yaw) *  Quaternion(Point3d(1, 0, 0), math.pi) # old method
+
+			print(f"{img.roll = } {img.pitch = } {img.yaw = }")
+			# this library expects roll, pitch, yaw
+			# if micasense is NED / ENU, we can convert by swapping X/Y and inverting yaw
+			# q = Quaternion.fromEulerAngles(img.roll,img.pitch,img.yaw) # euler
+			# q = Quaternion.fromEulerAngles(img.roll,img.pitch,-img.yaw) # neg euler
+			# q = Quaternion.fromEulerAngles(img.pitch,img.roll,-img.yaw) # flipped
+			# q = Quaternion.fromEulerAngles(img.pitch,img.roll,-img.yaw) * Quaternion(Point3d(1, 0, 0), math.pi) # mult
+			# TODO: probably this?
+			# q = Quaternion.fromEulerAngles(img.pitch,img.roll,-img.yaw+3.1415) * Quaternion(Point3d(1, 0, 0), math.pi) 
 			camera.pose = Pose(q, world_center).inverse()
 
 	# saveMidx
@@ -652,6 +664,7 @@ class Slam2D(Slam):
 			else:
 				energy=ConvertImageToGrayScale(full)
 			energy=ResizeImage(energy, self.energy_size)
+
 			(keypoints,descriptors)=self.extractor.doExtract(energy)
 
 			vs=self.width  / float(energy.shape[1])

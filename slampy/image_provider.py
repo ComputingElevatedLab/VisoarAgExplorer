@@ -29,6 +29,8 @@ LAT_NAMES=["GPSLatitude","Latitude","lat"]
 LON_NAMES=["GPSLongitude","Longitude","lon"]
 ALT_NAMES=["GPSAltitude","Altitude","alt"]
 YAW_NAMES=["Yaw","GimbalYaw","GimbalYawDegree","yaw","yaw(gps)"]
+ROLL_NAMES=["Roll"]
+PITCH_NAMES=["Pitch"]
 				
 
 # ///////////////////////////////////////////////////////////////////
@@ -43,6 +45,8 @@ class PythonSlamImage:
 		self.lat=0.0
 		self.alt=0.0
 		self.yaw=None
+		self.roll=None
+		self.pitch=None
 
 # //////////////////////////////////////////////////////////////////////////////
 class ImageProvider:
@@ -235,6 +239,8 @@ class ImageProvider:
 		LON=FindMetadata(first,LON_NAMES)
 		ALT=FindMetadata(first,ALT_NAMES)
 		YAW=FindMetadata(first,YAW_NAMES)
+		ROLL=FindMetadata(first,ROLL_NAMES)
+		PITCH=FindMetadata(first,PITCH_NAMES)
 
 		# using basename as a key to find in telemetry file
 		# '/a/b/cccc.jpg -> cccc.jpg
@@ -245,11 +251,15 @@ class ImageProvider:
 				lon=metadata[key][LON]
 				alt=metadata[key][ALT]
 				yaw=metadata[key][YAW]
-				print("Telemetry record","key",key,"lat",lat,"lon",lon,"alt",alt,"yaw",yaw)
+				roll=metadata[key][ROLL]
+				pitch=metadata[key][PITCH]
+				print("Telemetry record","key",key,"lat",lat,"lon",lon,"alt",alt,"yaw",yaw,"roll",roll,"pitch",pitch)
 				img.metadata["Telemetry:" + LAT_NAMES[0]]=lat
 				img.metadata["Telemetry:" + LON_NAMES[0]]=lon
 				img.metadata["Telemetry:" + ALT_NAMES[0]]=alt
 				img.metadata["Telemetry:" + YAW_NAMES[0]]=yaw
+				img.metadata["Telemetry:" + ROLL_NAMES[0]]=roll
+				img.metadata["Telemetry:" + PITCH_NAMES[0]]=pitch
 
 	# findPanels
 	def findPanels(self):
@@ -308,6 +318,51 @@ class ImageProvider:
 				print("WARNING","interpolating GPS",img.filenames[0],"lat",img.lat,"lon",img.lon,"alt",img.alt)
 			else:
 				raise Exception("cannot interpolate GPS for",img.filenames[0])
+
+
+	# loadRollFromMetadata
+	def loadRollFromMetadata(self):
+
+		img=self.images[0]
+		ROLL=FindMetadata(img.metadata,ROLL_NAMES)
+
+		if ROLL:
+			print("using metadata roll",ROLL)
+		else:
+			print("Guessing roll from flight direction (better not do that!)")
+
+		for I,img in enumerate(self.images):
+
+			if ROLL is not None:
+
+				if ROLL in img.metadata:
+					img.roll=ParseDouble(img.metadata[ROLL])
+					print(img.filenames[0], ROLL,img.roll)
+				else:
+					img.roll=self.images[I-1].roll
+					print(img.filenames[0], "missing",ROLL,"using last one",img.roll)
+
+	# loadPitchFromMetadata
+	def loadPitchFromMetadata(self):
+
+		img=self.images[0]
+		PITCH=FindMetadata(img.metadata,PITCH_NAMES)
+
+		if PITCH:
+			print("using metadata pitch",PITCH)
+		else:
+			print("Guessing pitch from flight direction (better not do that!)")
+
+		for I,img in enumerate(self.images):
+
+			if PITCH is not None:
+
+				if PITCH in img.metadata:
+					img.pitch=ParseDouble(img.metadata[PITCH])
+					print(img.filenames[0], PITCH,img.pitch)
+				else:
+					img.pitch=self.images[I-1].pitch
+					print(img.filenames[0], "missing",PITCH,"using last one",img.pitch)
 
 
 	# loadYawFromMetadata
@@ -382,6 +437,8 @@ class ImageProvider:
 			print("\t",img.filenames[0],"GPS Corrected","Altitude",old_alt,"to ",img.alt)
 			if img.alt<1.0:
 				print("dropping",img.filenames[0], "because too low")
+				print("force using",img.filenames[0], "even though too low")
+				good.append(img)
 			elif "target" in img.filenames[0]:
 				print('dropping',img.filenames[0], "because it is the target image")
 			else:
@@ -667,6 +724,8 @@ class ImageProvider:
 
 			print("Loading yaw from metadata...")
 			self.loadYawFromMetadata()
+			self.loadPitchFromMetadata()
+			self.loadRollFromMetadata()
 
 			# fixing yaws and adding yaw_offset
 			if True:
