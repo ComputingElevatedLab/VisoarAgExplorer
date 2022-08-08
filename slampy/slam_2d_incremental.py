@@ -10,6 +10,7 @@ from rtree import index as rtindex
 
 import OpenVisus as Visus
 import micasense.capture
+import micasense.dls
 import micasense.image
 import micasense.panel
 import slampy.image_provider as img_utils
@@ -25,7 +26,7 @@ from slampy.metadata_reader import MetadataReader
 
 class Slam2DIncremental(Visus.Slam):
 
-    def __init__(self, alt_threshold, directory, provider_type, extractor, extraction_band, verbose):
+    def __init__(self, alt_threshold, directory, provider_type, extractor, extraction_band, timing):
         super(Slam2DIncremental, self).__init__()
         self.depth = None
         self.width = 0
@@ -39,7 +40,7 @@ class Slam2DIncremental(Visus.Slam):
         self.debug_mode = False
         self.energy_size = None
         self.min_key_points = 1000
-        self.max_key_points = 3000
+        self.max_key_points = np.inf
         self.anms = 300
         if extraction_band == 6:
             self.min_key_points = 100
@@ -56,7 +57,7 @@ class Slam2DIncremental(Visus.Slam):
 
         self.execution_times = {}
         self.extraction_band = extraction_band if extraction_band >= 1 else None
-        self.verbose = verbose
+        self.timing = timing
         self.world_centers = {}
         self.initial_multi_image = None
         self.initial_interleaved_image = None
@@ -69,6 +70,10 @@ class Slam2DIncremental(Visus.Slam):
         self.reader = MetadataReader()
         self.idx = rtindex.Index()
         self.coordinates = {}
+        self.align_pbox = None
+        self.align_lbox = None
+        self.translation_offset = None
+        self.scale_offset = [1, 1]
 
         # Initialize the image provider
         self.alt_threshold = alt_threshold
@@ -91,7 +96,7 @@ class Slam2DIncremental(Visus.Slam):
         self.provider.cache_dir = self.cache_dir
 
     def add_image(self, image_path):
-        if self.verbose:
+        if self.timing:
             start_time = time.time()
 
         self.provider.addImage([image_path])
@@ -104,13 +109,13 @@ class Slam2DIncremental(Visus.Slam):
         image.alt -= self.plane
         self.adjust_image_yaw(image)
 
-        if self.verbose:
+        if self.timing:
             self.log_execution_time(inspect.currentframe().f_code.co_name, time.time() - start_time)
 
         return image
 
     def add_multi_band_image(self, image_path):
-        if self.verbose:
+        if self.timing:
             start_time = time.time()
 
         band = int(image_path[-5])
@@ -158,15 +163,14 @@ class Slam2DIncremental(Visus.Slam):
             self.initialized = True
 
         image.alt -= self.plane
-        # self.adjust_image_yaw(image)
 
-        if self.verbose:
+        if self.timing:
             self.log_execution_time(inspect.currentframe().f_code.co_name, time.time() - start_time)
 
         return image
 
     def load_image_metadata(self, image):
-        if self.verbose:
+        if self.timing:
             start_time = time.time()
 
         self.load_metadata(image)
@@ -175,21 +179,21 @@ class Slam2DIncremental(Visus.Slam):
         if not self.multi_band:
             self.interpolate_gps()
 
-        if self.verbose:
+        if self.timing:
             self.log_execution_time(inspect.currentframe().f_code.co_name, time.time() - start_time)
 
     def load_metadata(self, image):
-        if self.verbose:
+        if self.timing:
             start_time = time.time()
 
         filename = image.filenames[0]
         image.metadata = self.reader.readMetadata(filename)
 
-        if self.verbose:
+        if self.timing:
             self.log_execution_time(inspect.currentframe().f_code.co_name, time.time() - start_time)
 
     def load_gps_from_metadata(self, image):
-        if self.verbose:
+        if self.timing:
             start_time = time.time()
 
         print("Loading GPS latitude, longitude, and altitude from metadata")
@@ -212,11 +216,11 @@ class Slam2DIncremental(Visus.Slam):
 
         print(f"lat = {image.lat}, lon = {image.lon}, alt = {image.alt}")
 
-        if self.verbose:
+        if self.timing:
             self.log_execution_time(inspect.currentframe().f_code.co_name, time.time() - start_time)
 
     def load_yaw_from_metadata(self, image):
-        if self.verbose:
+        if self.timing:
             start_time = time.time()
 
         print(f"Loading yaw from metadata")
@@ -231,19 +235,15 @@ class Slam2DIncremental(Visus.Slam):
             print(f"Did not find a yaw value, using the previous yaw={self.previous_yaw}")
 
         # Convert the yaw to radians if necessary
-        if self.multi_band:
-            if image.yaw < 0:
-                image.yaw += np.pi * (47 / 24)
-            else:
-                image.yaw -= np.pi / 18
-        elif yaw and "radians" not in yaw.lower():
-            image.yaw = np.radians(image.yaw)
+        if not self.multi_band:
+            if yaw and "radians" not in yaw.lower():
+                image.yaw = np.radians(image.yaw)
 
-        if self.verbose:
+        if self.timing:
             self.log_execution_time(inspect.currentframe().f_code.co_name, time.time() - start_time)
 
     def interpolate_gps(self):
-        if self.verbose:
+        if self.timing:
             start_time = time.time()
 
         n = len(self.provider.images)
@@ -268,14 +268,14 @@ class Slam2DIncremental(Visus.Slam):
             else:
                 raise Exception(f"Error: could not interpolate GPS for {image.filenames[0]}")
 
-        if self.verbose:
+        if self.timing:
             self.log_execution_time(inspect.currentframe().f_code.co_name, time.time() - start_time)
 
     def wrong_gps(self, image):
         return image.lat == 0.0 or image.lon == 0.0 or image.alt == 0.0
 
     def initialize_slam(self, image):
-        if self.verbose:
+        if self.timing:
             start_time = time.time()
 
         if not image:
@@ -313,22 +313,22 @@ class Slam2DIncremental(Visus.Slam):
 
         self.calibration = self.provider.calibration
 
-        if self.verbose:
+        if self.timing:
             self.log_execution_time(inspect.currentframe().f_code.co_name, time.time() - start_time)
 
     def generate_multi_image(self, image):
-        if self.verbose:
+        if self.timing:
             start_time = time.time()
 
         multi_image = self.provider.generateMultiImage(image)
 
-        if self.verbose:
+        if self.timing:
             self.log_execution_time(inspect.currentframe().f_code.co_name, time.time() - start_time)
 
         return multi_image
 
     def interleave_channels(self, multi_image):
-        if self.verbose:
+        if self.timing:
             start_time = time.time()
 
         if len(multi_image) == 1:
@@ -336,7 +336,7 @@ class Slam2DIncremental(Visus.Slam):
 
         interleaved_image = np.dstack(multi_image)
 
-        if self.verbose:
+        if self.timing:
             self.log_execution_time(inspect.currentframe().f_code.co_name, time.time() - start_time)
 
         return interleaved_image
@@ -357,7 +357,7 @@ class Slam2DIncremental(Visus.Slam):
         return 0
 
     def adjust_image_yaw(self, image):
-        if self.verbose:
+        if self.timing:
             start_time = time.time()
 
         if self.multi_band:
@@ -371,11 +371,11 @@ class Slam2DIncremental(Visus.Slam):
                 image.yaw += offset
         print(f"{image.filenames[0]} - {image.yaw} radians {np.degrees(image.yaw)} degrees")
 
-        if self.verbose:
+        if self.timing:
             self.log_execution_time(inspect.currentframe().f_code.co_name, time.time() - start_time)
 
     def add_camera(self, image):
-        if self.verbose:
+        if self.timing:
             start_time = time.time()
 
         camera = Visus.Camera()
@@ -385,13 +385,13 @@ class Slam2DIncremental(Visus.Slam):
             camera.filenames.append(filename)
         super().addCamera(camera)
 
-        if self.verbose:
+        if self.timing:
             self.log_execution_time(inspect.currentframe().f_code.co_name, time.time() - start_time)
 
         return self.cameras[-1]
 
     def create_idx(self, camera):
-        if self.verbose:
+        if self.timing:
             start_time = time.time()
 
         camera.idx_filename = f"./idx/{camera.id:04d}.idx"
@@ -404,11 +404,11 @@ class Slam2DIncremental(Visus.Slam):
                         fields=[field],
                         dims=(self.width, self.height))
 
-        if self.verbose:
+        if self.timing:
             self.log_execution_time(inspect.currentframe().f_code.co_name, time.time() - start_time)
 
     def set_initial_pose(self, image, camera):
-        if self.verbose:
+        if self.timing:
             start_time = time.time()
 
         x, y = GPSUtils.gpsToLocalCartesian(image.lat, image.lon, self.lat0, self.lon0)
@@ -416,20 +416,20 @@ class Slam2DIncremental(Visus.Slam):
         q = Visus.Quaternion(Visus.Point3d(0, 0, 1), -image.yaw) * Visus.Quaternion(Visus.Point3d(1, 0, 0), np.pi)
         camera.pose = Visus.Pose(q, self.world_centers[camera.id]).inverse()
 
-        if self.verbose:
+        if self.timing:
             self.log_execution_time(inspect.currentframe().f_code.co_name, time.time() - start_time)
 
     def refresh_quads(self):
-        if self.verbose:
+        if self.timing:
             start_time = time.time()
 
         self.refreshQuads()
 
-        if self.verbose:
+        if self.timing:
             self.log_execution_time(inspect.currentframe().f_code.co_name, time.time() - start_time)
 
     def set_local_cameras(self):
-        if self.verbose:
+        if self.timing:
             start_time = time.time()
 
         box = self.getQuadsBox()
@@ -518,33 +518,33 @@ class Slam2DIncremental(Visus.Slam):
             cv2.polylines(out, [cell], True, [0, 0, 0], 3)
             cv2.putText(out, str(camera2.id), (center[0], center[1]), cv2.FONT_HERSHEY_COMPLEX_SMALL, 1.0, [0, 0, 0])
 
-        if self.verbose:
+        if self.timing:
             self.log_execution_time(inspect.currentframe().f_code.co_name, time.time() - start_time)
 
     def get_distance_threshold(self, x, y):
-        if self.verbose:
+        if self.timing:
             start_time = time.time()
 
         x_center = self.cameras[x].getWorldCenter()
         y_center = self.cameras[y].getWorldCenter()
         self.distance_threshold = self.cartesian_distance(x_center, y_center) * 1.5
 
-        if self.verbose:
+        if self.timing:
             self.log_execution_time(inspect.currentframe().f_code.co_name, time.time() - start_time)
 
     def insert_camera_into_spatial_index(self, camera):
-        if self.verbose:
+        if self.timing:
             start_time = time.time()
 
         box = camera.quad.getBoundingBox()
         self.coordinates[camera.id] = (box.p1[0], box.p1[1], box.p2[0], box.p2[1])
         self.idx.insert(camera.id, self.coordinates[camera.id])
 
-        if self.verbose:
+        if self.timing:
             self.log_execution_time(inspect.currentframe().f_code.co_name, time.time() - start_time)
 
     def get_intersecting_indices(self, at):
-        if self.verbose:
+        if self.timing:
             start_time = time.time()
 
         camera = self.cameras[at]
@@ -561,14 +561,14 @@ class Slam2DIncremental(Visus.Slam):
             else:
                 other_camera.bFixed = True
 
-        if self.verbose:
+        if self.timing:
             stop_time = time.time()
             self.log_execution_time(inspect.currentframe().f_code.co_name, stop_time - start_time)
 
         return indices
 
     def find_all_matches(self, at, indices):
-        if self.verbose:
+        if self.timing:
             start_time = time.time()
 
         for i, v in enumerate(indices):
@@ -582,12 +582,12 @@ class Slam2DIncremental(Visus.Slam):
                 camera_j = self.cameras[j]
                 self.find_matches(camera_i, camera_j)
 
-        if self.verbose:
+        if self.timing:
             stop_time = time.time()
             self.log_execution_time(inspect.currentframe().f_code.co_name, stop_time - start_time)
 
     def refresh_spatial_index(self, indices):
-        if self.verbose:
+        if self.timing:
             start_time = time.time()
 
         for i in indices:
@@ -595,12 +595,12 @@ class Slam2DIncremental(Visus.Slam):
             self.idx.delete(camera.id, self.coordinates[camera.id])
             self.insert_camera_into_spatial_index(camera)
 
-        if self.verbose:
+        if self.timing:
             stop_time = time.time()
             self.log_execution_time(inspect.currentframe().f_code.co_name, stop_time - start_time)
 
     def get_local_ba_indices(self, at, previous):
-        if self.verbose:
+        if self.timing:
             start_time = time.time()
 
         if previous:
@@ -638,7 +638,7 @@ class Slam2DIncremental(Visus.Slam):
                     self.find_matches(camera, other_camera)
                     other_camera.bFixed = False
 
-        if self.verbose:
+        if self.timing:
             self.log_execution_time(inspect.currentframe().f_code.co_name, time.time() - start_time)
 
         return indices
@@ -648,20 +648,23 @@ class Slam2DIncremental(Visus.Slam):
     def cartesian_distance(p1, p2):
         return (((p2.x - p1.x) ** 2) + ((p2.y - p1.y) ** 2) + ((p2.z - p1.z) ** 2)) ** 0.5
 
-    def bundle_adjust(self):
-        if self.verbose:
+    def bundle_adjust(self, algorithm=""):
+        if self.timing:
             start_time = time.time()
 
-        self.bundleAdjustment(self.ba_tolerance)
+        self.bundleAdjustment(self.ba_tolerance, algorithm)
 
-        if self.verbose:
+        if self.timing:
             self.log_execution_time(inspect.currentframe().f_code.co_name, time.time() - start_time)
 
-    def save_midx(self, suffix=""):
-        if self.verbose:
+    def create_visus_midx(self, suffix=""):
+        if self.timing:
             start_time = time.time()
 
-        print("Saving midx")
+        if self.translation_offset:
+            print(f"Aligning visus{suffix}.midx to Google Maps")
+        else:
+            print(f"Creating visus{suffix}.midx")
 
         logic_box = self.getQuadsBox()
 
@@ -676,6 +679,8 @@ class Slam2DIncremental(Visus.Slam):
             physic_box = Visus.BoxNd.invalid()
             for camera in self.cameras:
                 quad = self.computeWorldQuad(camera)
+                if self.translation_offset is not None:
+                    quad = quad.translate(self.translation_offset)
                 for point in quad.points:
                     lat, lon = GPSUtils.localCartesianToGps(point.x, point.y, self.lat0, self.lon0)
                     alpha, beta = GPSUtils.gpsToUnit(lat, lon)
@@ -714,11 +719,13 @@ class Slam2DIncremental(Visus.Slam):
         lines.append("")
 
         # how to go from logic_box (i.e. pixel) -> physic box ([0,1]*[0,1])
-        lines.append("<translate x='%s' y='%s'>" % (Visus.cstring10(physic_box.p1[0]), Visus.cstring10(physic_box.p1[1])))
+        lines.append(
+            "<translate x='%s' y='%s'>" % (Visus.cstring10(physic_box.p1[0]), Visus.cstring10(physic_box.p1[1])))
         lines.append("<scale     x='%s' y='%s'>" % (
-            Visus.cstring10(physic_box.size()[0] / logic_box.size()[0]),
-            Visus.cstring10(physic_box.size()[1] / logic_box.size()[1])))
-        lines.append("<translate x='%s' y='%s'>" % (Visus.cstring10(-logic_box.p1[0]), Visus.cstring10(-logic_box.p1[1])))
+            Visus.cstring10((physic_box.size()[0] * 0.9) / logic_box.size()[0]),
+            Visus.cstring10((physic_box.size()[1] * 0.9) / logic_box.size()[1])))
+        lines.append(
+            "<translate x='%s' y='%s'>" % (Visus.cstring10(-logic_box.p1[0]), Visus.cstring10(-logic_box.p1[1])))
         lines.append("")
 
         if self.enable_svg:
@@ -735,7 +742,8 @@ class Slam2DIncremental(Visus.Slam):
 
             lines.append("<g stroke='#000000' stroke-width='1' fill='#ffff00' fill-opacity='0.3'>")
             for i, camera in enumerate(self.cameras):
-                lines.append("\t<poi point='%s,%s' />" % (Visus.cstring(logic_centers[i][0]), Visus.cstring(logic_centers[i][1])))
+                lines.append("\t<poi point='%s,%s' />" % (
+                    Visus.cstring(logic_centers[i][0]), Visus.cstring(logic_centers[i][1])))
             lines.append("</g>")
 
             lines.append("<g fill-opacity='0.0' stroke-opacity='0.5' stroke-width='2'>")
@@ -768,24 +776,64 @@ class Slam2DIncremental(Visus.Slam):
         lines.append("</dataset>")
 
         Visus.SaveTextDocument(f"{self.cache_dir}/visus{suffix}.midx", "\n".join(lines))
-        print("Midx Saved")
+        if self.translation_offset:
+            print(f"Aligned visus{suffix}.midx to Google Maps")
+        else:
+            print(f"Created visus{suffix}.midx")
 
-        print("Saving google")
-        Visus.SaveTextDocument(f"{self.cache_dir}/google.midx",
-                         """
-                         <dataset name='slam' typename='IdxMultipleDataset'>
-                             <field name='voronoi'><code>output=voronoi()</code></field>
-                             <dataset typename='GoogleMapsDataset' tiles='http://mt1.google.com/vt/lyrs=s' physic_box='0.0 1.0 0.0 1.0' />
-                             <dataset name='visus'   url='./visus.midx' />
-                         </dataset>
-                         """)
-        print("Google Saved")
+        if self.timing:
+            self.log_execution_time(inspect.currentframe().f_code.co_name, time.time() - start_time)
 
-        if self.verbose:
+    def create_align_midx(self):
+        if self.timing:
+            start_time = time.time()
+
+        print("Creating align.midx")
+        logic_box = self.getQuadsBox()
+        self.align_lbox = np.array([int(logic_box.p1[0]), int(logic_box.p2[0]), int(logic_box.p1[1]), int(logic_box.p2[1])])
+
+        physic_box = self.physic_box
+        if physic_box is not None:
+            print("Using physic_box forced by the user", physic_box.toString())
+        else:
+            physic_box = Visus.BoxNd.invalid()
+            for camera in self.cameras:
+                quad = self.computeWorldQuad(camera)
+                if self.translation_offset is not None:
+                    quad = quad.translate(self.translation_offset)
+                for point in quad.points:
+                    lat, lon = GPSUtils.localCartesianToGps(point.x, point.y, self.lat0, self.lon0)
+                    alpha, beta = GPSUtils.gpsToUnit(lat, lon)
+                    physic_box.addPoint(Visus.PointNd(Visus.Point2d(alpha, beta)))
+
+        self.align_pbox = np.array([physic_box.p1[0], physic_box.p2[0], physic_box.p1[1], physic_box.p2[1]])
+
+        lines = ["<dataset name='slam' typename='IdxMultipleDataset'>",
+                 "\t<dataset typename='GoogleMapsDataset' tiles='http://mt1.google.com/vt/lyrs=s' physic_box='0.0 1.0 0.0 1.0' />",
+                 "</dataset>"]
+        Visus.SaveTextDocument(f"{self.cache_dir}/align.midx", "\n".join(lines))
+        print("Created align.midx")
+
+        if self.timing:
+            self.log_execution_time(inspect.currentframe().f_code.co_name, time.time() - start_time)
+
+    def create_google_midx(self, suffix=""):
+        if self.timing:
+            start_time = time.time()
+
+        print("Creating google.midx")
+        lines = ["<dataset name='slam' typename='IdxMultipleDataset'>",
+                 "\t<field name='voronoi'><code>output=voronoi()</code></field>",
+                 "\t<dataset typename='GoogleMapsDataset' tiles='http://mt1.google.com/vt/lyrs=s' physic_box='0.0 1.0 0.0 1.0' />",
+                 f"\t<dataset name='visus'   url='./visus{suffix}.midx' />", "</dataset>"]
+        Visus.SaveTextDocument(f"{self.cache_dir}/google.midx", "\n".join(lines))
+        print("Created google.midx")
+
+        if self.timing:
             self.log_execution_time(inspect.currentframe().f_code.co_name, time.time() - start_time)
 
     def debug_matches_graph(self):
-        if self.verbose:
+        if self.timing:
             start_time = time.time()
 
         box = self.getQuadsBox()
@@ -821,7 +869,7 @@ class Slam2DIncremental(Visus.Slam):
 
         img_utils.SaveImage(f"{self.cache_dir}/~matches.png", out)
 
-        if self.verbose:
+        if self.timing:
             self.log_execution_time(inspect.currentframe().f_code.co_name, time.time() - start_time)
 
     def get_image_center(self, image):
@@ -834,7 +882,7 @@ class Slam2DIncremental(Visus.Slam):
         return int((p[0] - box.p1[0]) * (W / w)), int(H - (p[1] - box.p1[1]) * (H / h))
 
     def debug_solution(self):
-        if self.verbose:
+        if self.timing:
             start_time = time.time()
 
         box = self.getQuadsBox()
@@ -854,11 +902,11 @@ class Slam2DIncremental(Visus.Slam):
 
         img_utils.SaveImage(f"{self.cache_dir}/~solution.png", out)
 
-        if self.verbose:
+        if self.timing:
             self.log_execution_time(inspect.currentframe().f_code.co_name, time.time() - start_time)
 
     def quad_to_screen(self, p, box):
-        if self.verbose:
+        if self.timing:
             start_time = time.time()
 
         w = float(box.size()[0])
@@ -867,13 +915,13 @@ class Slam2DIncremental(Visus.Slam):
         H = int(h * (W / w))
         ret_val = int(0 + (p[0] - box.p1[0]) * (W / w)), int(H - (p[1] - box.p1[1]) * (H / h))
 
-        if self.verbose:
+        if self.timing:
             self.log_execution_time(inspect.currentframe().f_code.co_name, time.time() - start_time)
 
         return ret_val
 
     def interleave_and_write_image(self, image, camera):
-        if self.verbose:
+        if self.timing:
             start_time = time.time()
 
         if self.initial_multi_image:
@@ -887,13 +935,13 @@ class Slam2DIncremental(Visus.Slam):
         data = Visus.LoadDataset(f"{self.cache_dir}/{camera.idx_filename}")
         data.write(interleaved_image)
 
-        if self.verbose:
+        if self.timing:
             self.log_execution_time(inspect.currentframe().f_code.co_name, time.time() - start_time)
 
         return interleaved_image
 
     def extract_key_points(self, interleaved_image, camera):
-        if self.verbose:
+        if self.timing:
             start_time = time.time()
 
         # if we're using micasense imagery, select the band specified by the user for extraction
@@ -915,18 +963,19 @@ class Slam2DIncremental(Visus.Slam):
         if key_points:
             camera.keypoints.reserve(len(key_points))
             for p in key_points:
-                kp = Visus.KeyPoint(self.vs * p.pt[0], self.vs * p.pt[1], p.size, p.angle, p.response, p.octave, p.class_id)
+                kp = Visus.KeyPoint(self.vs * p.pt[0], self.vs * p.pt[1], p.size, p.angle, p.response, p.octave,
+                                    p.class_id)
                 camera.keypoints.push_back(kp)
             camera.descriptors = Visus.Array.fromNumPy(descriptors, TargetDim=2)
             super().saveKeyPoints(camera, f"{self.cache_dir}/key_points/{camera.id}")
 
         print(f"Done converting and extracting {camera.filenames[0]}")
 
-        if self.verbose:
+        if self.timing:
             self.log_execution_time(inspect.currentframe().f_code.co_name, time.time() - start_time)
 
     def find_matches(self, camera1, camera2):
-        if self.verbose:
+        if self.timing:
             start_time = time.time()
 
         if camera1.keypoints.empty() or camera2.keypoints.empty():
@@ -951,7 +1000,7 @@ class Slam2DIncremental(Visus.Slam):
         matches = [Visus.Match(match.queryIdx, match.trainIdx, match.imgIdx, match.distance) for match in matches]
         camera2.getEdge(camera1).setMatches(matches, str(len(matches)))
 
-        if self.verbose:
+        if self.timing:
             self.log_execution_time(inspect.currentframe().f_code.co_name, time.time() - start_time)
 
         return len(matches)
@@ -960,6 +1009,45 @@ class Slam2DIncremental(Visus.Slam):
         self.removeOutlierMatches(self.max_reprojection_error * self.width)
         self.removeDisconnectedCameras()
         self.removeCamerasWithTooMuchSkew()
+
+    def align_to_google(self):
+        db_google = Visus.LoadDataset(f"{self.cache_dir}/align.midx")
+        google_logic_box = db_google.getLogicBox(x=self.align_pbox[0:2], y=self.align_pbox[2:4])
+        align_image = db_google.read(logic_box=google_logic_box, max_resolution=58)
+        # align_image = cv2.resize(align_image, self.energy_size)
+        # align_image = cv2.flip(align_image, 0)
+        (src_points, src_descriptors) = self.extractor.doExtract(align_image)
+        h, _ = cv2.findHomography(self.convert_cv2_kp(src_points), self.convert_visus_kp(self.cameras[0].keypoints))
+
+        print("Homography matrix")
+        for i in range(3):
+            for j in range(3):
+                print(h[i][j], end=" ")
+            print("\n")
+
+        self.translation_offset = Visus.Point2d((h[0, 2] * -5) / self.height, (h[1, 2] * 3) / self.width)
+        # self.scale_offset = [h[2, 0], h[2, 1]]
+        cv2.imwrite(f"{self.cache_dir}/align.jpg", align_image)
+        print("Offsets")
+        print(self.translation_offset.x, self.translation_offset.y)
+
+    def convert_cv2_kp(self, arr):
+        new_arr = []
+        for kp in arr:
+            new_arr.append(kp.pt)
+        return np.array(new_arr)
+
+    def convert_visus_kp(self, arr):
+        new_arr = []
+        for kp in arr:
+            new_arr.append([kp.x, kp.y])
+        return np.array(new_arr)
+
+    def convert_quad(self, arr):
+        new_arr = []
+        for kp in arr:
+            new_arr.append([kp.x, kp.y])
+        return np.array(new_arr)
 
     def log_execution_time(self, func_name, seconds):
         if func_name not in self.execution_times:
