@@ -469,7 +469,10 @@ class ImageProvider:
 		if ABS and REL:
 			try:
 				elevations=[ParseDouble(image.metadata[ABS])-ParseDouble(image.metadata[REL]) for image in self.images]
-				value=statistics.median(elevations)
+				# median ends up causing a lot of problems when we have some images on the ground, but most images in the sky. 
+				# min probably works better.
+				value=min(elevations)
+				# value=statistics.median(elevations)
 				print("Guessing plane",value, ABS, REL)
 				return value
 			except:

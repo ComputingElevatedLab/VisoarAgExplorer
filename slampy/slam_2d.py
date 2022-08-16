@@ -389,17 +389,13 @@ class Slam2D(Slam):
 			img=self.images[I]
 			# TODO: figure out if micasense needs old way or new one?
 
-			q = Quaternion(Point3d(0, 0, 1), -img.yaw) *  Quaternion(Point3d(1, 0, 0), math.pi) # old method
+			# q = Quaternion(Point3d(0, 0, 1), -img.yaw) *  Quaternion(Point3d(1, 0, 0), math.pi) # old method
 
 			print(f"{img.roll = } {img.pitch = } {img.yaw = }")
 			# this library expects roll, pitch, yaw
 			# if micasense is NED / ENU, we can convert by swapping X/Y and inverting yaw
 			# q = Quaternion.fromEulerAngles(img.roll,img.pitch,img.yaw) # euler
-			# q = Quaternion.fromEulerAngles(img.roll,img.pitch,-img.yaw) # neg euler
-			# q = Quaternion.fromEulerAngles(img.pitch,img.roll,-img.yaw) # flipped
-			# q = Quaternion.fromEulerAngles(img.pitch,img.roll,-img.yaw) * Quaternion(Point3d(1, 0, 0), math.pi) # mult
-			# TODO: probably this?
-			# q = Quaternion.fromEulerAngles(img.pitch,img.roll,-img.yaw+3.1415) * Quaternion(Point3d(1, 0, 0), math.pi) 
+			q = Quaternion.fromEulerAngles(img.roll,-img.pitch,-img.yaw)
 			camera.pose = Pose(q, world_center).inverse()
 
 	# saveMidx
@@ -665,7 +661,9 @@ class Slam2D(Slam):
 				energy=ConvertImageToGrayScale(full)
 			energy=ResizeImage(energy, self.energy_size)
 
-			(keypoints,descriptors)=self.extractor.doExtract(energy)
+			# TODO: fix this 
+			# (keypoints,descriptors)=self.extractor.doExtract(energy)
+			keypoints = False
 
 			vs=self.width  / float(energy.shape[1])
 			if keypoints:
@@ -678,8 +676,8 @@ class Slam2D(Slam):
 			self.saveKeyPoints(camera,keypoint_filename)
 
 			energy=cv2.cvtColor(energy, cv2.COLOR_GRAY2RGB)
-			for keypoint in keypoints:
-				cv2.drawMarker(energy, (int(keypoint.pt[0]), int(keypoint.pt[1])), (0, 255, 255), cv2.MARKER_CROSS, 5)
+			# for keypoint in keypoints:
+			# 	cv2.drawMarker(energy, (int(keypoint.pt[0]), int(keypoint.pt[1])), (0, 255, 255), cv2.MARKER_CROSS, 5)
 			energy=cv2.flip(energy, 0)
 			energy=ConvertImageToUint8(energy)
 
