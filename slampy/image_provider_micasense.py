@@ -24,7 +24,8 @@ class ImageProviderRedEdge(ImageProvider):
 		super().__init__()
 		self.panel_calibration=panel_calibration
 		self.panel_irradiance=None
-		self.yaw_offset=math.pi # in the sequence I have the yaw is respect to the south
+		# self.yaw_offset=math.pi # in the sequence I have the yaw is respect to the south
+		self.yaw_offset=-(math.pi/2) # in the sequence I have the yaw is respect to the south
 	
 	# example: NIR_608.TIF  / RGB_608.TIF / Thermal_608.TIF returns 608
 	def getGroupId(self,filename):
