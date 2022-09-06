@@ -395,7 +395,8 @@ class Slam2D(Slam):
 			# this library expects roll, pitch, yaw
 			# if micasense is NED / ENU, we can convert by swapping X/Y and inverting yaw
 			# q = Quaternion.fromEulerAngles(img.roll,img.pitch,img.yaw) # euler
-			q = Quaternion.fromEulerAngles(img.roll,-img.pitch,-img.yaw)
+			# q = Quaternion.fromEulerAngles(0,3.14,3.14-img.yaw) # this is effectively what the old method does
+			q = Quaternion.fromEulerAngles(0,3.14,3.14-img.yaw)
 			camera.pose = Pose(q, world_center).inverse()
 
 	# saveMidx
