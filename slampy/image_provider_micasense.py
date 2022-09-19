@@ -86,19 +86,19 @@ class ImageProviderRedEdge(ImageProvider):
 			except:
 				pass
 
-
 	# generateMultiImage
-	def generateMultiImage(self,img):
+	def generateMultiImage(self, img):
 		capture = micasense.capture.Capture.from_filelist(img.filenames)
-		# note I'm ignoring distotions here
-		# capture.images[I].undistorted(capture.images[I].reflectance())
 		multi = capture.reflectance(self.panel_irradiance)
 		multi = [single.astype('float32') for single in multi]
 		multi = self.mirrorY(multi)
 		multi = self.swapRedAndBlue(multi)
 		multi = self.undistortImage(multi)
-
 		multi = self.alignImage(multi, capture)
 
-		multi=[single for single in multi if single.shape==multi[0].shape]
+		if len(multi) >= 5:
+			shape = (multi[0].shape[1], multi[0].shape[0])
+			for i in range(5, len(multi)):
+				multi[i] = cv2.resize(multi[i], shape)
+
 		return multi
