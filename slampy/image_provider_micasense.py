@@ -20,9 +20,9 @@ from slampy.image_provider import *
 class ImageProviderRedEdge(ImageProvider):
 	
 	#  constructor (TODO: panel_calibration)
-	def __init__(self,panel_calibration=[0.67, 0.69, 0.68, 0.61, 0.67]):
+	def __init__(self):
 		super().__init__()
-		self.panel_calibration=panel_calibration
+		self.panel_calibration=None
 		self.panel_irradiance=None
 		# self.yaw_offset=math.pi # in the sequence I have the yaw is respect to the south
 		self.yaw_offset=-(math.pi/2) # in the sequence I have the yaw is respect to the south
@@ -80,6 +80,7 @@ class ImageProviderRedEdge(ImageProvider):
 		for it in self.panels:
 			try:
 				panel = micasense.capture.Capture.from_filelist(it.filenames) 
+				self.panel_calibration = panel.panel_albedo()
 				self.panel_irradiance = panel.panel_irradiance(self.panel_calibration)	
 				print("panel_irradiance",self.panel_irradiance)
 				break

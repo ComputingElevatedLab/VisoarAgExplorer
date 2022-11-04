@@ -290,10 +290,10 @@ class Metadata(object):
             return False
         from packaging import version
         version_string = self.firmware_version().strip('v')
-        if self.camera_model() == "Altum":
-            good_version = "1.2.3"
+        if self.camera_model() == 'Altum' or self.camera_model() == 'Altum-PT':
+            good_version = '1.2.3'
         elif self.camera_model() == 'RedEdge' or self.camera_model() == 'RedEdge-M':
-            good_version = "5.1.7"
+            good_version = '5.1.7'
         else:
             raise ValueError("Camera model is required to be RedEdge or Altum, not {} ".format(self.camera_model()))
         return version.parse(version_string) >= version.parse(good_version)
