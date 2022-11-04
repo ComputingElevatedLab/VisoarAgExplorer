@@ -173,6 +173,7 @@ class Slam2D(Slam):
 		self.enable_svg              = True
 		self.enable_color_matching   = False
 		self.do_bundle_adjustment    = True
+		self.do_keypoint_extraction  = True
 		
 	# setImageDirectory
 	def setImageDirectory(self, image_dir, cache_dir=None, telemetry=None, plane=None, calibration=None, physic_box=None,max_images=0,debug_mode=False):
@@ -640,8 +641,14 @@ class Slam2D(Slam):
 
 			print(f"dataset write time in ms: {(dataset_end - dataset_start) * 1000}")
 
-			convert_start = time.time()
+			# TODO: maybe I can clean this function up a bit? 
+			# Seems like a lot of unrelated stuff happens here.
+			# break execution if we're skipping keypoint extraction
+			if not self.do_keypoint_extraction:
+				print("Skipping keypoint extraction, done",camera.filenames[0],I,"of",len(self.cameras))
+				return
 
+			convert_start = time.time()
 
 			energy = None
 
@@ -651,7 +658,9 @@ class Slam2D(Slam):
 				energy = full[:,:,self.micasense_band]
 			else:
 				energy=ConvertImageToGrayScale(full)
+
 			energy=ResizeImage(energy, self.energy_size)
+
 			(keypoints,descriptors)=self.extractor.doExtract(energy)
 
 			vs=self.width  / float(energy.shape[1])

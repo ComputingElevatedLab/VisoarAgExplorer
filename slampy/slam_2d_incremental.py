@@ -9,6 +9,7 @@ import numpy as np
 from rtree import index as rtindex
 
 import OpenVisus as Visus
+import deepmatching_wrapper as dm
 import micasense.capture
 import micasense.dls
 import micasense.image
@@ -740,7 +741,7 @@ class Slam2DIncremental(Visus.Slam):
             '\t<translate x="%s" y="%s">' % (Visus.cstring10(physic_box.p1[0]), Visus.cstring10(physic_box.p1[1])))
         lines.append('\t\t<scale x="%s" y="%s">' % (
             Visus.cstring10(self.scale_values[0] * self.scale_offset[0]),
-            Visus.cstring10(self.scale_values[0] * self.scale_offset[1])))
+            Visus.cstring10(self.scale_values[1] * self.scale_offset[1])))
         lines.append(
             '\t\t\t<translate x="%s" y="%s">' % (Visus.cstring10(-logic_box.p1[0]), Visus.cstring10(-logic_box.p1[1])))
 
@@ -1189,72 +1190,77 @@ class Slam2DIncremental(Visus.Slam):
 
         return len(matches)
 
+    def find_all_matches(self):
+        if self.timing:
+            start_time = time.time()
+
+        n = len(self.cameras)
+        for i, camera_i in enumerate(self.cameras):
+            for j in range(i + 1, n):
+                camera_j = self.cameras[j]
+                self.find_matches(camera_i, camera_j)
+
+        if self.timing:
+            self.log_execution_time(inspect.currentframe().f_code.co_name, time.time() - start_time)
+
     def remove_bad_cameras(self):
         self.removeOutlierMatches(self.max_reprojection_error * self.width)
         self.removeDisconnectedCameras()
         self.removeCamerasWithTooMuchSkew()
 
     def align_to_satellite(self, suffix):
-        partial_mosaic = Visus.LoadDataset(f"{self.cache_dir}/visus{suffix}.midx")
-        mosaic_image = partial_mosaic.read()
-        mosaic_image = cv2.flip(mosaic_image, 0)
+        print('Loading mosaic')
+        mosaic = Visus.LoadDataset(f"{self.cache_dir}/visus{suffix}.midx")
+        mosaic_image = mosaic.read()
+        # mosaic_transformed = cv2.flip(mosaic_image, 0)
+        print('Loading corresponding satellite tile')
         google = Visus.LoadDataset(f"{self.cache_dir}/google-no-dataset.midx")
         google_logic_box = google.getLogicBox(x=[self.cached_physic_box.p1[0], self.cached_physic_box.p2[0]],
                                               y=[self.cached_physic_box.p1[1], self.cached_physic_box.p2[1]])
         satellite_image = google.read(logic_box=google_logic_box)
-        satellite_image = cv2.flip(satellite_image, 0)
+        # satellite_transformed = cv2.flip(satellite_image, 0)
 
-        mosaic_image = cv2.cvtColor(mosaic_image, cv2.COLOR_BGR2GRAY)
-        satellite_image = cv2.cvtColor(satellite_image, cv2.COLOR_BGR2GRAY)
+        if not self.multi_band:
+            mosaic_transformed = cv2.cvtColor(mosaic_image, cv2.COLOR_BGR2GRAY)
+            cv2.imwrite(f"{self.cache_dir}/mosaic_image.jpg", mosaic_transformed)
+        else:
+            cv2.imwrite(f"{self.cache_dir}/mosaic_image.jpg", mosaic_image)
+        satellite_transformed = cv2.cvtColor(satellite_image, cv2.COLOR_BGR2GRAY)
 
-        cv2.imwrite(f"{self.cache_dir}/mosaic_image.jpg", mosaic_image)
-        cv2.imwrite(f"{self.cache_dir}/satellite_image.jpg", satellite_image)
+        cv2.imwrite(f"{self.cache_dir}/satellite_image.jpg", satellite_transformed)
 
-        m_height, m_width = mosaic_image.shape
-        s_height, s_width = satellite_image.shape
+        # m_height, m_width = mosaic_transformed.shape
+        # s_height, s_width = satellite_transformed.shape
+        #
+        # width = int(max(m_width, s_width) * 0.1)
+        # height = int(max(m_height, s_height) * 0.1)
 
-        width = int(max(m_width, s_width) * 0.1)
-        height = int(max(m_height, s_height) * 0.1)
+        print("Running deepmatcher on the mosaic and satellite tiles")
 
-        mosaic_image = cv2.resize(mosaic_image, (width, height))
-        satellite_image = cv2.resize(satellite_image, (width, height))
+        matches, name1, name2, qw, qh, tw, th, img1, img2 = dm.match(f"{self.cache_dir}/mosaic_image.jpg",
+                                                                     f"{self.cache_dir}/satellite_image.jpg")
 
-        cv2.imwrite(f"{self.cache_dir}/mosaic_image.jpg", mosaic_image)
-        cv2.imwrite(f"{self.cache_dir}/satellite_image.jpg", satellite_image)
+        cv2.imwrite(f"{self.cache_dir}/img1.jpg", img1)
+        cv2.imwrite(f"{self.cache_dir}/img2.jpg", img2)
 
-        # Do mutual information here
-        keypoints1, descriptors1 = self.mutual_information(satellite_image)
-        keypoints2, descriptors2 = self.mutual_information(satellite_image)
-
-        # detector = cv2.SIFT.create(500)
-        # keypoints1, descriptors1 = detector.detectAndCompute(satellite_image, None)
-        # keypoints2, descriptors2 = detector.detectAndCompute(mosaic_image, None)
-
-        matcher = cv2.BFMatcher(crossCheck=True)
-        matches = matcher.match(descriptors1, descriptors2)
-        matches = sorted(matches, key=lambda x: x.distance)
-
-        imMatches = cv2.drawMatches(satellite_image, keypoints1, mosaic_image, keypoints2, matches, None)
-        cv2.imwrite(f"{self.cache_dir}/matches{suffix}.jpg", imMatches)
-
-        points1 = np.zeros((len(matches), 2), dtype=np.float32)
-        points2 = np.zeros((len(matches), 2), dtype=np.float32)
-
-        for i, match in enumerate(matches):
-            points1[i, :] = keypoints1[match.queryIdx].pt
-            points2[i, :] = keypoints2[match.trainIdx].pt
-
+        points1 = np.float32([[m[0], m[1]] for m in matches])
+        points2 = np.float32([[m[2], m[3]] for m in matches])
         h, mask = cv2.findHomography(points1, points2, cv2.RANSAC)
-        print(h)
 
-    def mutual_information(self, image):
-        height, width = image.shape
-        image = np.array(image)
-        for row in range(np.linspace(0, height - 9, 9)):
-            for col in range(np.linspace(0, width - 9, 9)):
-                region = image[row:row + 9, col:col + 9]
-                print(region)
+        inlier = []
+        for index, m in enumerate(mask):
+            if np.isclose(m, 1):
+                inlier.append(matches[index])
 
+        # inlier = sorted(inlier, key=lambda x: x[5])[:10]
+
+        dm.draw(img1, img2, inlier, f"{self.cache_dir}/matches.png")
+        # Translation should be roughly 11, -3 for TestData
+        print(h[0, 2], h[1, 2])
+        print(h[0, 2] / 100, h[1, 2] / 100)
+        self.translation_offset = Visus.Point2d(h[0, 2] / 100, h[1, 2] / 100)
+        print(h[0, 0], h[1, 1])
+        self.scale_offset = [h[0, 0], h[1, 1]]
 
     def align_to_google(self, suffix):
         if self.timing:
