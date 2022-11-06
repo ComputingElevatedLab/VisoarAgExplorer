@@ -47,7 +47,8 @@ class ImageProviderRedEdge(ImageProvider):
 		return v[-2]
 	
 	# isPanel
-	def isPanel(self,img):
+	@staticmethod
+	def isPanel(img):
 		panel = micasense.panel.Panel(micasense.image.Image(img.filenames[0]))
 		return panel.panel_detected()
 
@@ -60,7 +61,7 @@ class ImageProviderRedEdge(ImageProvider):
 		# find the first panel
 		while self.images and not self.isPanel(self.images[0]):
 			print("Dropping",self.images[0].filenames,"because I need a panel")
-			self.images=self.images[1:]
+			self.images.pop(0)
 
 		if not self.images:
 			raise Exception("cannot find the panel")
@@ -69,17 +70,17 @@ class ImageProviderRedEdge(ImageProvider):
 		while self.images and self.isPanel(self.images[0]):
 			print(self.images[0].filenames,"is panel")
 			self.panels.append(self.images[0])
-			self.images=self.images[1:]
+			self.images.pop(0)
 
-		if not self.images:
-			raise Exception("cannot find flight images")
+		# if not self.images:
+		# 	raise Exception("cannot find flight images")
 
-		print(self.images[0].filenames,"is not panel, starting the flight")
+		# print(self.images[0].filenames,"is not panel, starting the flight")
 
 		# not I need to find a detected panel (it must be in self.panels)
 		for it in self.panels:
 			try:
-				panel = micasense.capture.Capture.from_filelist(it.filenames) 
+				panel = micasense.capture.Capture.from_filelist(it.filenames)
 				self.panel_calibration = panel.panel_albedo()
 				self.panel_irradiance = panel.panel_irradiance(self.panel_calibration)	
 				print("panel_irradiance",self.panel_irradiance)
@@ -87,9 +88,8 @@ class ImageProviderRedEdge(ImageProvider):
 			except:
 				pass
 
-
 	# generateMultiImage
-	def generateMultiImage(self,img):
+	def generateMultiImage(self, img):
 		capture = micasense.capture.Capture.from_filelist(img.filenames)
 		capture_warp_matrices = capture.get_warp_matrices()
 		# note I'm ignoring distortions here
@@ -107,6 +107,9 @@ class ImageProviderRedEdge(ImageProvider):
 		multi = self.swapRedAndBlue(multi)
 		multi = self.undistortImage(multi)
 
+		if len(multi) >= 5:
+			shape = (multi[0].shape[1], multi[0].shape[0])
+			for i in range(5, len(multi)):
+				multi[i] = cv2.resize(multi[i], shape)
 
-		multi=[single for single in multi if single.shape==multi[0].shape]
 		return multi
