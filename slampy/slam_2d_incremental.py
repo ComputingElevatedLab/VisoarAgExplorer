@@ -88,7 +88,7 @@ class Slam2DIncremental(Visus.Slam):
         elif self.provider_type == "altum-pt":
             self.multi_band = True
             self.band_range = 7
-            self.provider = ImageProviderRedEdge([0.67, 0.69, 0.68, 0.61, 0.67, 0.67])
+            self.provider = ImageProviderRedEdge()
         elif self.provider_type == "sequoia":
             self.provider = ImageProviderSequoia()
         else:
@@ -718,13 +718,17 @@ class Slam2DIncremental(Visus.Slam):
         self.physic_box_string = f"{physic_box.p1[0]} {physic_box.p2[0]} {physic_box.p1[1]} {physic_box.p2[1]}"
         lines = [
             f'<dataset typename="IdxMultipleDataset" logic_box="{self.logic_box_string}" physic_box="{self.physic_box_string}">',
-            '\t<slam width="%s" height="%s" dtype="%s" calibration="%s %s %s" />' % (
+            '\t<slam width="%s" height="%s" dtype="%s" calibration="%s %s %s"/>' % (
                 Visus.cstring(self.width), Visus.cstring(self.height), self.dtype.toString(),
                 Visus.cstring(self.calibration.f), Visus.cstring(self.calibration.cx),
                 Visus.cstring(self.calibration.cy))]
 
         # If we're using a micasense camera, create a field for each band
         if self.multi_band:
+            lines.append("\t<field name='rgb'>")
+            lines.append("\t\t<code>output=ArrayUtils.withNumberOfComponents(voronoi(),3)</code>")
+            lines.append("\t</field>")
+
             for i in range(self.band_range):
                 lines.append(f'\t<field name="band{i}">')
                 lines.append(f"\t\t<code>output=ArrayUtils.split(voronoi())[{i}]</code>")
