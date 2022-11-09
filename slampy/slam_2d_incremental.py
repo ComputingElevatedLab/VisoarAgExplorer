@@ -98,17 +98,15 @@ class Slam2DIncremental(Visus.Slam):
         self.provider.plane = None
         self.provider.image_dir = self.image_dir
         self.provider.cache_dir = self.cache_dir
+        self.provider.extractor_method = extractor
 
-        self.min_key_points = 1000
-        self.max_key_points = np.inf
+        self.min_key_points = 3000
+        self.max_key_points = 6000
         self.anms = 500
-        # if extraction_band == self.band_range:
-        #     self.min_key_points = 100
-        #     self.max_key_points = 300
-        self.max_reprojection_error = 0.0505
+        self.max_reprojection_error = 0.01
         self.ratio_check = 0.8
         self.calibration.bFixed = False
-        self.ba_tolerance = 0.01
+        self.ba_tolerance = 0.005
         self.extractor = ExtractKeyPoints(self.min_key_points, self.max_key_points, self.anms, extractor)
 
     def add_image(self, image_path):
@@ -308,11 +306,8 @@ class Slam2DIncremental(Visus.Slam):
 
         # Used to resize all incoming images
         scale = 0.2
-        # if self.extraction_band == self.band_range:
-        #     scale = 2
         energy_width = int(self.width * scale)
         energy_height = int(self.height * scale)
-        # self.vs = self.width / float(energy_height)
         self.energy_size = (energy_width, energy_height)
 
         # NOTE: from telemetry I'm just taking lat,lon,alt,yaw (not other stuff)
@@ -320,6 +315,9 @@ class Slam2DIncremental(Visus.Slam):
             self.provider.loadTelemetry(self.provider.telemetry)
         if not self.provider.calibration:
             self.provider.calibration = self.provider.guessCalibration(self.initial_multi_image)
+
+        # Needed so that RGB bands will be aligned later
+        self.provider.findMultiAlignment(self.initial_multi_image)
 
         self.calibration = self.provider.calibration
 
@@ -726,7 +724,7 @@ class Slam2DIncremental(Visus.Slam):
         # If we're using a micasense camera, create a field for each band
         if self.multi_band:
             lines.append("\t<field name='rgb'>")
-            lines.append("\t\t<code>output=ArrayUtils.withNumberOfComponents(voronoi(),3)</code>")
+            lines.append('\t\t<code>output=ArrayUtils.interleave(ArrayUtils.split(voronoi())[0:3])</code>')
             lines.append("\t</field>")
 
             for i in range(self.band_range):
@@ -1214,42 +1212,43 @@ class Slam2DIncremental(Visus.Slam):
 
     def align_to_satellite(self, suffix):
         print('Loading mosaic')
-        mosaic = Visus.LoadDataset(f"{self.cache_dir}/visus{suffix}.midx")
-        mosaic_image = mosaic.read()
-        # mosaic_transformed = cv2.flip(mosaic_image, 0)
-        print('Loading corresponding satellite tile')
-        google = Visus.LoadDataset(f"{self.cache_dir}/google-no-dataset.midx")
-        google_logic_box = google.getLogicBox(x=[self.cached_physic_box.p1[0], self.cached_physic_box.p2[0]],
-                                              y=[self.cached_physic_box.p1[1], self.cached_physic_box.p2[1]])
-        satellite_image = google.read(logic_box=google_logic_box)
-        # satellite_transformed = cv2.flip(satellite_image, 0)
-
-        if not self.multi_band:
-            mosaic_transformed = cv2.cvtColor(mosaic_image, cv2.COLOR_BGR2GRAY)
-            cv2.imwrite(f"{self.cache_dir}/mosaic_image.jpg", mosaic_transformed)
+        if os.path.isfile(f"{self.cache_dir}/mosaic.jpg"):
+            mosaic_image = cv2.imread(f"{self.cache_dir}/mosaic.jpg")
         else:
-            cv2.imwrite(f"{self.cache_dir}/mosaic_image.jpg", mosaic_image)
-        satellite_transformed = cv2.cvtColor(satellite_image, cv2.COLOR_BGR2GRAY)
+            mosaic = Visus.LoadDataset(f"{self.cache_dir}/visus{suffix}.midx")
+            mosaic_image = mosaic.read()
+            mosaic_image = cv2.flip(mosaic_image, 0)
+            cv2.imwrite(f"{self.cache_dir}/mosaic.jpg", mosaic_image)
+            if not self.multi_band:
+                mosaic_transformed = cv2.cvtColor(mosaic_image, cv2.COLOR_BGR2GRAY)
+                cv2.imwrite(f"{self.cache_dir}/src.jpg", mosaic_transformed)
+            else:
+                cv2.imwrite(f"{self.cache_dir}/src.jpg", mosaic_image)
 
-        cv2.imwrite(f"{self.cache_dir}/satellite_image.jpg", satellite_transformed)
-
-        # m_height, m_width = mosaic_transformed.shape
-        # s_height, s_width = satellite_transformed.shape
-        #
-        # width = int(max(m_width, s_width) * 0.1)
-        # height = int(max(m_height, s_height) * 0.1)
+        print('Loading corresponding satellite tile')
+        if os.path.isfile(f"{self.cache_dir}/satellite.jpg"):
+            satellite_image = cv2.imread(f"{self.cache_dir}/satellite.jpg")
+        else:
+            google = Visus.LoadDataset(f"{self.cache_dir}/google-no-dataset.midx")
+            google_logic_box = google.getLogicBox(x=[self.cached_physic_box.p1[0], self.cached_physic_box.p2[0]],
+                                                  y=[self.cached_physic_box.p1[1], self.cached_physic_box.p2[1]])
+            satellite_image = google.read(logic_box=google_logic_box)
+            satellite_image = cv2.flip(satellite_image, 0)
+            cv2.imwrite(f"{self.cache_dir}/satellite.jpg", satellite_image)
+            satellite_transformed = cv2.cvtColor(satellite_image, cv2.COLOR_BGR2GRAY)
+            cv2.imwrite(f"{self.cache_dir}/dst.jpg", satellite_transformed)
 
         print("Running deepmatcher on the mosaic and satellite tiles")
-
-        matches, name1, name2, qw, qh, tw, th, img1, img2 = dm.match(f"{self.cache_dir}/mosaic_image.jpg",
-                                                                     f"{self.cache_dir}/satellite_image.jpg")
-
-        cv2.imwrite(f"{self.cache_dir}/img1.jpg", img1)
-        cv2.imwrite(f"{self.cache_dir}/img2.jpg", img2)
-
+        matches, name1, name2, qw, qh, tw, th, img1, img2 = dm.match(f"{self.cache_dir}/src.jpg",
+                                                                     f"{self.cache_dir}/dst.jpg")
+        matches = np.array(matches)
+        matches = matches[matches[:, 5].argsort()[::-1]]
+        numGoodMatches = int(len(matches) * 0.6)
+        matches = matches[:numGoodMatches]
         points1 = np.float32([[m[0], m[1]] for m in matches])
         points2 = np.float32([[m[2], m[3]] for m in matches])
         h, mask = cv2.findHomography(points1, points2, cv2.RANSAC)
+        print(h)
 
         inlier = []
         for index, m in enumerate(mask):
@@ -1258,13 +1257,19 @@ class Slam2DIncremental(Visus.Slam):
 
         # inlier = sorted(inlier, key=lambda x: x[5])[:10]
 
+        for image in self.cameras:
+            pts = image.quad
+
         dm.draw(img1, img2, inlier, f"{self.cache_dir}/matches.png")
+        aligned_image = cv2.warpPerspective(mosaic_image, h, (mosaic_image.shape[1], mosaic_image.shape[0]))
+        cv2.imwrite(f"{self.cache_dir}/aligned_image.jpg", aligned_image)
+
         # Translation should be roughly 11, -3 for TestData
         print(h[0, 2], h[1, 2])
-        print(h[0, 2] / 100, h[1, 2] / 100)
-        self.translation_offset = Visus.Point2d(h[0, 2] / 100, h[1, 2] / 100)
-        print(h[0, 0], h[1, 1])
-        self.scale_offset = [h[0, 0], h[1, 1]]
+        # print(h[0, 2] / 100, h[1, 2] / 100)
+        # self.translation_offset = Visus.Point2d(h[0, 2] / 100, h[1, 2] / 100)
+        # print(h[0, 0], h[1, 1])
+        # self.scale_offset = [h[0, 0], h[1, 1]]
 
     def align_to_google(self, suffix):
         if self.timing:
