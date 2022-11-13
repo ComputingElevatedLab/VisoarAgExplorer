@@ -3,6 +3,7 @@ from OpenVisus import *
 from slampy.image_utils import *
 
 import cv2
+import cv2.cuda
 import numpy
 
 # /////////////////////////////////////////////////////////////////////////////////////
@@ -103,13 +104,26 @@ def FindMatches(width, height,
 
     out = ""
     out += "%d/%d" % (id1, id2)
-
+    useGPU = True
     # cv2.FlannBasedMatcher matcher don't have advantages using flann
-    matcher = cv2.BFMatcher(cv2.NORM_HAMMING)
+    if useGPU:
+        # cuda malloc
+        cuMatDesc1 = cv2.cuda_GpuMat()
+        cuMatDesc2 = cv2.cuda_GpuMat()
+        # put data on GPU
+        cuMatDesc1.upload(descriptors1)
+        cuMatDesc2.upload(descriptors2)
+        # run matcher on gpu
+        matcher = cv2.cuda.DescriptorMatcher_createBFMatcher(cv2.NORM_HAMMING)
+        knn1 = matcher.knnMatch(cuMatDesc1, cuMatDesc2, 2)
+        knn2 = matcher.knnMatch(cuMatDesc2, cuMatDesc1, 2)
+        out += " knnMatch(%d,%d)" % (len(knn1), len(knn2))
+    else:
+        matcher = cv2.BFMatcher(cv2.NORM_HAMMING)
 
-    knn1 = matcher.knnMatch(descriptors1, descriptors2, 2)
-    knn2 = matcher.knnMatch(descriptors2, descriptors1, 2)
-    out += " knnMatch(%d,%d)" % (len(knn1), len(knn2))
+        knn1 = matcher.knnMatch(descriptors1, descriptors2, 2)
+        knn2 = matcher.knnMatch(descriptors2, descriptors1, 2)
+        out += " knnMatch(%d,%d)" % (len(knn1), len(knn2))
 
     matches1 = RatioCheck(knn1, ratio_check)
     matches2 = RatioCheck(knn2, ratio_check)

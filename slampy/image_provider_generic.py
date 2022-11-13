@@ -7,6 +7,9 @@ import struct
 
 from slampy.image_provider import *
 
+import micasense
+
+
 # /////////////////////////////////////////////////////////////////////////////////////////////////////
 class ImageProviderGeneric(ImageProvider):
 
@@ -25,7 +28,7 @@ class ImageProviderGeneric(ImageProvider):
 		multi = self.mirrorY(multi)
 		multi = self.swapRedAndBlue(multi)
 		multi = self.undistortImage(multi)
-		multi = self.alignImage(multi)
+		multi = self.alignImage(multi,None)
 		return multi
 
 
