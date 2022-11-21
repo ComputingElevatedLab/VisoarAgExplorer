@@ -81,8 +81,11 @@ class ImageProviderRedEdge(ImageProvider):
 		for it in self.panels:
 			try:
 				panel = micasense.capture.Capture.from_filelist(it.filenames)
-				self.panel_calibration = panel.panel_albedo()
-				self.panel_irradiance = panel.panel_irradiance(self.panel_calibration)	
+				if panel.panel_albedo() is not None:
+					self.panel_calibration = panel.panel_albedo()
+				else:
+					self.panel_irradiance = [0.65] * len(panel.images)  # inexact, but quick
+				self.panel_irradiance = panel.panel_irradiance(self.panel_calibration)
 				print("panel_irradiance",self.panel_irradiance)
 				break
 			except:
