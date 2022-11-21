@@ -88,18 +88,23 @@ class Slam2DIncremental(Visus.Slam):
         self.initialized = False
         self.provider_type = provider_type
         if self.provider_type == "lumenera":
+            logging.info("Setting Lumenera provider")
             self.provider = ImageProviderLumenera()
         elif self.provider_type == "rededge" or self.provider_type == "micasense":
+            logging.info("Setting Micasense provider")
             self.multi_band = True
             self.band_range = 6
             self.provider = ImageProviderRedEdge()
         elif self.provider_type == "altum-pt":
+            logging.info("Setting Altum-PT provider")
             self.multi_band = True
             self.band_range = 7
             self.provider = ImageProviderRedEdge()
         elif self.provider_type == "sequoia":
+            logging.info("Setting Sequoia provider")
             self.provider = ImageProviderSequoia()
         else:
+            logging.info("Setting generic provider")
             self.provider = ImageProviderGeneric()
         self.provider.skip_value = 1
         self.provider.telemetry = None
@@ -110,7 +115,7 @@ class Slam2DIncremental(Visus.Slam):
 
         self.min_key_points = 1000
         self.max_key_points = 6000
-        self.anms = 6000
+        self.anms = 1000
         self.max_reprojection_error = 0.01
         self.ratio_check = 0.8
         self.calibration.bFixed = False
@@ -356,8 +361,8 @@ class Slam2DIncremental(Visus.Slam):
 
         # Used to resize all incoming images
         scale = 0.2
-        energy_width = int(self.width * scale)
-        energy_height = int(self.height * scale)
+        energy_width = max(int(self.width * scale), 256)
+        energy_height = max(int(self.height * scale), 256)
         self.energy_size = (energy_width, energy_height)
 
         # NOTE: from telemetry I'm just taking lat,lon,alt,yaw (not other stuff)
@@ -1436,19 +1441,19 @@ class Slam2DIncremental(Visus.Slam):
             super().saveKeyPoints(camera, f"{self.output_dir}/key_points/{camera.id}")
 
         logging.info(f"Done converting and extracting {camera.filenames[0]}")
-        stop_time = time.time()
-        logging.info(
-            f"Conversion and feature extraction done in {(stop_time - extract_start) * 1000} msec"
-        )
 
+        execution_time = time.time() - start_time
         if self.timing:
             self.log_execution_time(
-                inspect.currentframe().f_code.co_name, stop_time - start_time
+                inspect.currentframe().f_code.co_name, execution_time
             )
+        logging.info(
+            f"convert time in ms: {execution_time * 1000}"
+        )
+        return execution_time
 
     def find_matches(self, camera1, camera2):
-        if self.timing:
-            start_time = time.time()
+        start_time = time.time()
 
         if camera1.keypoints.empty() or camera2.keypoints.empty():
             camera2.getEdge(camera1).setMatches([], "No key points")
@@ -1458,7 +1463,7 @@ class Slam2DIncremental(Visus.Slam):
         if camera2.getEdge(camera1).isGood():
             return 0
 
-        matches, H21, err = FindMatches(
+        matches, h, err = FindMatches(
             self.width,
             self.height,
             camera1.id,
@@ -1479,15 +1484,18 @@ class Slam2DIncremental(Visus.Slam):
             Visus.Match(match.queryIdx, match.trainIdx, match.imgIdx, match.distance)
             for match in matches
         ]
-        camera1.getEdge(camera2).setMatches(matches, str(len(matches)))
-        camera2.getEdge(camera1).setMatches(matches, str(len(matches)))
+        num_matches = len(matches)
+        camera1.getEdge(camera2).setMatches(matches, str(num_matches))
+        camera2.getEdge(camera1).setMatches(matches, str(num_matches))
 
+        execution_time = time.time() - start_time
         if self.timing:
             self.log_execution_time(
-                inspect.currentframe().f_code.co_name, time.time() - start_time
+                inspect.currentframe().f_code.co_name, execution_time
             )
+        logging.info(f"Found num_matches({num_matches}) matches in ms: {execution_time * 1000}")
 
-        return len(matches)
+        return num_matches
 
     def find_all_matches(self):
         if self.timing:
@@ -1505,8 +1513,11 @@ class Slam2DIncremental(Visus.Slam):
             )
 
     def remove_bad_cameras(self):
+        logging.info("Removing outlier matches")
         self.removeOutlierMatches(self.max_reprojection_error * self.width)
+        logging.info("Removing disconnected cameras")
         self.removeDisconnectedCameras()
+        logging.info("Removing cameras with too much skew")
         self.removeCamerasWithTooMuchSkew()
 
     def log_execution_time(self, func_name, seconds):
