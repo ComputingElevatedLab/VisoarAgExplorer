@@ -37,6 +37,7 @@ class Slam2DIncremental(Visus.Slam):
         extraction_band,
         timing,
     ):
+        logging.info("Initializing Slam2DIncremental object")
         super(Slam2DIncremental, self).__init__()
         self.depth = None
         self.width = 0
@@ -60,6 +61,7 @@ class Slam2DIncremental(Visus.Slam):
         self.world_centers = {}
         self.initial_multi_image = None
         self.initial_interleaved_image = None
+        self.initial_generate_time = None
         self.lat0 = None
         self.lon0 = None
         self.alt0 = None
@@ -88,23 +90,23 @@ class Slam2DIncremental(Visus.Slam):
         self.initialized = False
         self.provider_type = provider_type
         if self.provider_type == "lumenera":
-            logging.info("Setting Lumenera provider")
+            logging.info("Initializing Lumenera provider")
             self.provider = ImageProviderLumenera()
         elif self.provider_type == "rededge" or self.provider_type == "micasense":
-            logging.info("Setting Micasense provider")
+            logging.info("Initializing Micasense provider")
             self.multi_band = True
             self.band_range = 6
             self.provider = ImageProviderRedEdge()
         elif self.provider_type == "altum-pt":
-            logging.info("Setting Altum-PT provider")
+            logging.info("Initializing Altum-PT provider")
             self.multi_band = True
             self.band_range = 7
             self.provider = ImageProviderRedEdge()
         elif self.provider_type == "sequoia":
-            logging.info("Setting Sequoia provider")
+            logging.info("Initializing Sequoia provider")
             self.provider = ImageProviderSequoia()
         else:
-            logging.info("Setting generic provider")
+            logging.info("Initializing generic provider")
             self.provider = ImageProviderGeneric()
         self.provider.skip_value = 1
         self.provider.telemetry = None
@@ -115,13 +117,13 @@ class Slam2DIncremental(Visus.Slam):
 
         self.min_key_points = 1000
         self.max_key_points = 6000
-        self.anms = 1000
+        self.anms = 1500
         self.max_reprojection_error = 0.01
         self.ratio_check = 0.8
         self.calibration.bFixed = False
         self.ba_tolerance = 0.005
         self.extractor = ExtractKeyPoints(
-            self.min_key_points, self.max_key_points, self.anms, extractor
+            self.min_key_points, self.max_key_points, self.anms, extractor, True
         )
 
     def add_image(self, image_path):
@@ -159,33 +161,38 @@ class Slam2DIncremental(Visus.Slam):
                 image_bands.append(ith_band_path)
 
         if not self.panels_found:
+            panel_start = time.time()
             self.provider.addImage(image_bands)
             self.load_metadata(self.provider.images[-1])
             panel = micasense.panel.Panel(micasense.image.Image(image_bands[0]))
             if panel.panel_detected():
-                return None
+                panel_time = time.time() - panel_start
+                return None, panel_time
 
             if len(self.provider.images) == 1:
                 self.provider.images.pop(0)
-                return None
+                panel_time = time.time() - panel_start
+                return None, panel_time
 
             self.provider.findPanels()
             self.panels_found = True
+            panel_time = time.time() - panel_start
         else:
             self.provider.addImage(image_bands)
+            panel_time = None
 
         if not self.provider.images:
-            return None
+            return None, panel_time
 
         image = self.provider.images[-1]
         self.load_image_metadata(image)
 
         if image.alt < self.alt_threshold:
             logging.info(
-                f"Dropping image: altitude of {image.alt} is below the threshold"
+                f"Dropping image: altitude of {image.alt} is below the threshold {self.alt_threshold}"
             )
             self.provider.images.pop()
-            return None
+            return None, panel_time
 
         if not self.initialized:
             self.initialize_slam(image)
@@ -198,7 +205,7 @@ class Slam2DIncremental(Visus.Slam):
                 inspect.currentframe().f_code.co_name, time.time() - start_time
             )
 
-        return image
+        return image, panel_time
 
     def load_image_metadata(self, image):
         if self.timing:
@@ -348,7 +355,7 @@ class Slam2DIncremental(Visus.Slam):
         self.initial_interleaved_image = self.interleave_channels(
             self.initial_multi_image
         )
-        logging.info(f"generate time in ms: {(time.time() - generate_start) * 1000}")
+        self.initial_generate_time = time.time() - generate_start
 
         image_as_array = Visus.Array.fromNumPy(
             self.initial_interleaved_image, TargetDim=2
@@ -1383,19 +1390,22 @@ class Slam2DIncremental(Visus.Slam):
             interleaved_image = self.initial_interleaved_image
             self.initial_multi_image = None
             self.initial_interleaved_image = None
+            generate_time = self.initial_generate_time
         else:
             generate_start = time.time()
             multi_image = self.generate_multi_image(image)
             interleaved_image = self.interleave_channels(multi_image)
+            generate_time = time.time() - generate_start
             logging.info(
-                f"generate time in ms: {(time.time() - generate_start) * 1000}"
+                f"Interleaved image generated in: {generate_time} s"
             )
 
         dataset_start = time.time()
         data = Visus.LoadDataset(f"{self.output_dir}/{camera.idx_filename}")
         data.write(interleaved_image)
+        write_time = time.time() - dataset_start
         logging.info(
-            f"dataset write time in ms: {(time.time() - dataset_start) * 1000}"
+            f"Wrote interleaved image data in: {write_time} s"
         )
 
         if self.timing:
@@ -1403,7 +1413,7 @@ class Slam2DIncremental(Visus.Slam):
                 inspect.currentframe().f_code.co_name, time.time() - start_time
             )
 
-        return interleaved_image
+        return interleaved_image, generate_time, write_time
 
     def extract_key_points(self, interleaved_image, camera):
         start_time = time.time()
@@ -1417,9 +1427,10 @@ class Slam2DIncremental(Visus.Slam):
 
         energy = cv2.resize(energy, self.energy_size)
 
-        extract_start = time.time()
-        key_points, descriptors = self.extractor.doExtract(energy)
-        logging.info(f"extraction time in ms: {(time.time() - extract_start) * 1000}")
+        feature_start = time.time()
+        key_points, descriptors, extract_time = self.extractor.doExtract(energy)
+        feature_time = time.time() - feature_start
+        logging.info(f"Extracted key points in: {feature_time} s")
 
         if not self.vs:
             self.vs = self.width / float(energy.shape[1])
@@ -1440,17 +1451,14 @@ class Slam2DIncremental(Visus.Slam):
             camera.descriptors = Visus.Array.fromNumPy(descriptors, TargetDim=2)
             super().saveKeyPoints(camera, f"{self.output_dir}/key_points/{camera.id}")
 
-        logging.info(f"Done converting and extracting {camera.filenames[0]}")
+        convert_time = time.time() - start_time
+        logging.info(f"Done extracting and converting key points from {camera.filenames[0]} in {convert_time} s")
 
-        execution_time = time.time() - start_time
         if self.timing:
             self.log_execution_time(
-                inspect.currentframe().f_code.co_name, execution_time
+                inspect.currentframe().f_code.co_name, convert_time
             )
-        logging.info(
-            f"convert time in ms: {execution_time * 1000}"
-        )
-        return execution_time
+        return convert_time, feature_time, extract_time
 
     def find_matches(self, camera1, camera2):
         start_time = time.time()
@@ -1526,13 +1534,14 @@ class Slam2DIncremental(Visus.Slam):
         self.execution_times[func_name].append(seconds)
 
     # Save all execution time data as a csv
-    def write_times_to_csv(self, filename="times.csv"):
+    def write_times_to_csv(self):
         if not self.execution_times.keys():
             return
 
-        if os.path.exists(filename):
-            os.remove(filename)
-        with open(filename, "a") as file:
+        path = os.path.join(self.output_dir, "execution_timing.csv")
+        if os.path.exists(path):
+            os.remove(path)
+        with open(path, "a") as file:
             file.write(
                 f"function_name,total ({len(self.provider.images)} img),avg,min,max,\n"
             )

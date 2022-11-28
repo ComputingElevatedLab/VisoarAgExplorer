@@ -8,9 +8,10 @@ from slampy.image_utils import *
 class ExtractKeyPoints:
 
 	# constructor
-	def __init__(self,min_num_keypoints,max_num_keypoints,anms,extractor_method="akaze"):
+	def __init__(self,min_num_keypoints,max_num_keypoints,anms,extractor_method="akaze", timing=False):
 
 		self.extractor_method=extractor_method
+		self.timing = timing
 		
 		if (extractor_method == "akaze"):
 			self.detector = cv2.AKAZE.create()
@@ -107,7 +108,10 @@ class ExtractKeyPoints:
 		msec_compute = t2.elapsedMsec()
 
 		print("Extracted",len(keypoints), " keypoints"," in " , T1.elapsedMsec() ," msec", "msec_detect", msec_detect, "msec_compute" , msec_compute, "msec_anms",msec_anms)
-		return (keypoints,descriptors)
+		if self.timing:
+			return keypoints, descriptors, T1.elapsedMsec() / 1000
+		else:
+			return keypoints, descriptors
 
 
 	def doExtractKaze(self, energy): 
@@ -172,7 +176,10 @@ class ExtractKeyPoints:
 		msec_compute = t2.elapsedMsec()
 
 		print("Extracted",len(keypoints), " keypoints"," in " , T1.elapsedMsec() ," msec", "msec_detect", msec_detect, "msec_compute" , msec_compute, "msec_anms",msec_anms)
-		return (keypoints,descriptors)
+		if self.timing:
+			return keypoints, descriptors, T1.elapsedMsec() / 1000
+		else:
+			return keypoints, descriptors
 
 
 	def doExtractOrb(self, energy): 
@@ -243,8 +250,10 @@ class ExtractKeyPoints:
 		msec_compute = t2.elapsedMsec()
 
 		print("Extracted",len(keypoints), " keypoints"," in " , T1.elapsedMsec() ," msec", "msec_detect", msec_detect, "msec_compute" , msec_compute, "msec_anms",msec_anms)
-		return (keypoints,descriptors)
-
+		if self.timing:
+			return keypoints, descriptors, T1.elapsedMsec() / 1000
+		else:
+			return keypoints, descriptors
 
 	def doExtractSift(self, energy): 
 		T1 = Time.now()
@@ -289,4 +298,7 @@ class ExtractKeyPoints:
 		msec_compute = t2.elapsedMsec()
 
 		print("Extracted",len(keypoints), " keypoints"," in " , T1.elapsedMsec() ," msec", "msec_detect", msec_detect, "msec_compute" , msec_compute, "msec_anms",msec_anms)
-		return (keypoints,descriptors)
+		if self.timing:
+			return keypoints, descriptors, T1.elapsedMsec() / 1000
+		else:
+			return keypoints, descriptors
