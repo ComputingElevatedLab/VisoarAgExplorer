@@ -71,7 +71,7 @@ class MultiSensorAlignment:
 
 			# work in full dim energy
 			energy=multi[I] 
-			keypoints,descriptors,_=extractor.doExtract(energy)
+			keypoints,descriptors=extractor.doExtract(energy)
 
 			camera.keypoints.reserve(len(keypoints))
 			for k in keypoints:

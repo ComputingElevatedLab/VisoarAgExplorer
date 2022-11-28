@@ -123,7 +123,7 @@ class Slam2DIncremental(Visus.Slam):
         self.calibration.bFixed = False
         self.ba_tolerance = 0.005
         self.extractor = ExtractKeyPoints(
-            self.min_key_points, self.max_key_points, self.anms, extractor, True
+            self.min_key_points, self.max_key_points, self.anms, extractor, timing=True
         )
 
     def add_image(self, image_path):
