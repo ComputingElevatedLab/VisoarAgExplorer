@@ -943,11 +943,10 @@ class Slam2DIncremental(Visus.Slam):
         for camera in self.cameras:
             p = camera.getWorldCenter()
             lat, lon = GPSUtils.localCartesianToGps(p.x, p.y, self.lat0, self.lon0)
-            path = os.path.abspath(self.output_dir)
             lines.append(
                 '\t\t\t\t<dataset url="%s" color="%s" quad="%s" filenames="%s" q="%s" t="%s" lat="%s" lon="%s" alt="%s" />'
                 % (
-                    f"{path}/{camera.idx_filename[2:]}",
+                    f"./{camera.idx_filename[2:]}",
                     camera.color.toString(),
                     camera.quad.toString(),
                     ";".join(camera.filenames),
