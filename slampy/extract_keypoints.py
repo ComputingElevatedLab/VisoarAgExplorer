@@ -293,7 +293,8 @@ class ExtractKeyPoints:
 
 		keypoints,descriptors=self.detector.compute(energy_n, keypoints)
 
-		descriptors = np.array(descriptors, dtype=numpy.uint8)
+		if descriptors is not None:
+			descriptors = np.array(descriptors, dtype=numpy.uint8)
 
 		msec_compute = t2.elapsedMsec()
 

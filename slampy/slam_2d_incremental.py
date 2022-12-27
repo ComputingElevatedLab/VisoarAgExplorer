@@ -35,6 +35,7 @@ class Slam2DIncremental(Visus.Slam):
         provider_type,
         extractor,
         extraction_band,
+        resize_scale,
         timing,
     ):
         logging.info("Initializing Slam2DIncremental object")
@@ -81,6 +82,7 @@ class Slam2DIncremental(Visus.Slam):
         self.cached_physic_box = None
         self.physic_box_string = ""
         self.physic_box_values = []
+        self.resize_scale = resize_scale
 
         # Initialize the image provider
         self.alt_threshold = alt_threshold
@@ -367,9 +369,9 @@ class Slam2DIncremental(Visus.Slam):
         self.dtype = image_as_array.dtype
 
         # Used to resize all incoming images
-        scale = 0.2
-        energy_width = max(int(self.width * scale), 256)
-        energy_height = max(int(self.height * scale), 256)
+        self.resize_scale = 0.4
+        energy_width = max(int(self.width * self.resize_scale), 256)
+        energy_height = max(int(self.height * self.resize_scale), 256)
         self.energy_size = (energy_width, energy_height)
 
         # NOTE: from telemetry I'm just taking lat,lon,alt,yaw (not other stuff)
@@ -1457,7 +1459,7 @@ class Slam2DIncremental(Visus.Slam):
             self.log_execution_time(
                 inspect.currentframe().f_code.co_name, convert_time
             )
-        return convert_time, feature_time, extract_time
+        return convert_time, feature_time, extract_time, len(key_points)
 
     def find_matches(self, camera1, camera2):
         start_time = time.time()
