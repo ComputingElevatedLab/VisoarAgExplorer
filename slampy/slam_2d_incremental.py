@@ -369,7 +369,6 @@ class Slam2DIncremental(Visus.Slam):
         self.dtype = image_as_array.dtype
 
         # Used to resize all incoming images
-        self.resize_scale = 0.4
         energy_width = max(int(self.width * self.resize_scale), 256)
         energy_height = max(int(self.height * self.resize_scale), 256)
         self.energy_size = (energy_width, energy_height)
