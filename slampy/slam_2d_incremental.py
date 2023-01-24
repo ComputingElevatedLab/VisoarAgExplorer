@@ -3,6 +3,7 @@ import logging
 import math
 import os.path
 import random
+import re
 import time
 
 import cv2
@@ -69,7 +70,7 @@ class Slam2DIncremental(Visus.Slam):
         self.plane = None
         self.vs = None
         self.distance_threshold = np.inf
-        self.previous_yaw = None
+        self.previous_yaw = 0
         self.reader = MetadataReader()
         self.idx = rtindex.Index()
         self.coordinates = {}
@@ -119,7 +120,7 @@ class Slam2DIncremental(Visus.Slam):
 
         self.min_key_points = 1000
         self.max_key_points = 6000
-        self.anms = 1500
+        self.anms = 2000
         self.max_reprojection_error = 0.01
         self.ratio_check = 0.8
         self.calibration.bFixed = False
@@ -1556,3 +1557,86 @@ class Slam2DIncremental(Visus.Slam):
                     file.write(f"{t},")
                 file.write("\n")
             file.close()
+
+    def blend(self, count):
+        f = open(f"{self.output_dir}/visus{count}.midx", "r")
+        f = f.read()
+
+        quad = r'<dataset\b[^<>]* quad="([^"]+)"'
+        m = re.findall(quad, f)
+        quad_points = []
+        for i in m:
+            float_list = list(map(float, i.split(" ")))
+            pair_list = []
+            for x in zip(float_list[::2], float_list[1::2]):
+                pair_list.append(x)
+            quad_points.append(list(pair_list))
+
+        corners = []
+        maxy = 0
+        warped = []
+        masks = []
+        sizes = []
+        for i, points in enumerate(quad_points):
+            tlx = int(min(points[0][0], points[1][0], points[2][0], points[3][0]))
+            tly = int(min(points[0][1], points[1][1], points[2][1], points[3][1]))
+            blx = int(max(points[0][0], points[1][0], points[2][0], points[3][0]))
+            bly = int(max(points[0][1], points[1][1], points[2][1], points[3][1]))
+
+            if bly > maxy:
+                maxy = bly
+
+            img = cv2.imread(self.cameras[i].filenames[0])
+
+            width, height = img.shape[1], img.shape[0]
+            sizes.append((img.shape[1], img.shape[0]))
+
+            newpoints = [[p[0] - tlx, p[1] - tly] for p in points]
+
+            corners.append([tlx, tly])
+
+            maskarray = 255 * np.ones(img.shape, dtype="uint8")
+
+            pts1 = np.float32([list(newpoints[0]), list(newpoints[1]), list(newpoints[2]), list(newpoints[3])])
+            pts2 = np.float32([[0, 0], [width, 0], [width, height], [0, height]])
+            matrix = cv2.getPerspectiveTransform(pts1, pts2)
+            warp = cv2.warpPerspective(img, matrix, (width, height))
+            warped_mask = cv2.warpPerspective(maskarray, matrix, (width, height))
+            mask = cv2.cvtColor(warped_mask, cv2.COLOR_RGB2GRAY)
+            warped.append(warp)
+            masks.append(mask)
+
+        for c in corners:
+            c[1] = maxy - c[1]
+
+        seam_finder = cv2.detail_DpSeamFinder('COLOR')
+        masks_seams = seam_finder.find(warped, corners, masks)
+
+        masks_seams = list(masks_seams)
+
+        blend_strength = 5
+        blend_type = "feather"
+
+        blender = cv2.detail.Blender_createDefault(cv2.detail.Blender_NO)
+        dst_sz = cv2.detail.resultRoi(corners=corners, sizes=sizes)
+        blend_width = np.sqrt(dst_sz[2] * dst_sz[3]) * blend_strength / 100
+        if blend_width < 1:
+            blender = cv2.detail.Blender_createDefault(cv2.detail.Blender_NO)
+        elif blend_type == "multiband":
+            blender = cv2.detail_MultiBandBlender()
+            blender.setNumBands((np.log(blend_width) / np.log(2.) - 1.).astype(np.int32))
+        elif blend_type == "feather":
+            blender = cv2.detail_FeatherBlender()
+            blender.setSharpness(1. / blend_width)
+        blender.prepare(dst_sz)
+
+        for i in range(len(masks)):
+            image_warped_s = warped[i].astype(np.int16)
+            masks_seams[i] = cv2.convertScaleAbs(masks_seams[i])
+            blender.feed(cv2.UMat(image_warped_s), masks_seams[i], corners[i])
+
+        result = None
+        result_mask = None
+        result, result_mask = blender.blend(result, result_mask)
+        dst = cv2.normalize(src=result, dst=None, alpha=255., norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
+        cv2.imwrite(f"{self.output_dir}/result.jpg", dst)
