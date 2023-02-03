@@ -21,7 +21,7 @@
 
 
 class CBA{
-	public:
+	private:
 		cuba::CudaBundleAdjustment::Ptr optimizerGPU;
 		cuba::CameraParams camera;
 		Eigen::Matrix<double, 3, 1> Kvertex;
@@ -35,7 +35,8 @@ class CBA{
 	CBA(){
 		optimizerGPU = cuba::CudaBundleAdjustment::create();
 	}
-	~CBA(){
+	
+	void cleanup(){
 		for(auto &pv: poses){
 			delete pv;
 		}
@@ -78,6 +79,7 @@ class CBA{
 	}
 	
 	void addEdge(int &id1, int &id2, double (&ary)[4]){
+		/*
 		auto measurement = Eigen::Matrix<double, 4, 1>(ary); // cuba only accepts size 3
 		auto info = Eigen::Matrix<double, 3, 1>::Identity(); // cuba expects a double, not array
 		auto v1 = optimizerGPU->poseVertex(id1);
@@ -85,10 +87,11 @@ class CBA{
 		auto edge = new cuba::StereoEdge(measurement, info, v1, v2);
 		edges.push_back(edge);
 		optimizerGPU->addStereoEdge(edge);
+		*/
 	}
 	
 	void optimize(int n){
-		optimizerGPU->optimize(n)
+		optimizerGPU->optimize(n);
 	}
 	
 	
@@ -98,7 +101,7 @@ class CBA{
 
 int main(){
 	//auto optimizerGPU = cuba::CudaBundleAdjustment::create();
-	//CBA cba = CBA();
+	CBA cba = CBA();
 	printf("\n\nPass\n\n");
 	
 	return 0;
