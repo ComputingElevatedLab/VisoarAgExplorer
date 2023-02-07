@@ -72,7 +72,8 @@ class Slam2DIncremental(Visus.Slam):
         self.distance_threshold = np.inf
         self.previous_yaw = 0
         self.reader = MetadataReader()
-        self.idx = rtindex.Index()
+        self.idx_centers = rtindex.Index()
+        self.idx_boxes = rtindex.Index()
         self.coordinates = {}
         self.align_pbox = None
         self.align_lbox = None
@@ -657,26 +658,113 @@ class Slam2DIncremental(Visus.Slam):
                 inspect.currentframe().f_code.co_name, time.time() - start_time
             )
 
-    def insert_camera_into_spatial_index(self, camera):
+    def insert_camera_center_into_spatial_index(self, camera):
         if self.timing:
             start_time = time.time()
 
         center = self.world_centers[camera.id]
-        self.idx.insert(camera.id, (center[0], center[1]))
+        self.idx_centers.insert(camera.id, (center[0], center[1]))
 
         if self.timing:
             self.log_execution_time(
                 inspect.currentframe().f_code.co_name, time.time() - start_time
             )
 
+    def insert_camera_box_into_spatial_index(self, camera):
+        if self.timing:
+            start_time = time.time()
+
+        box = camera.quad.getBoundingBox()
+        self.idx_boxes.insert(camera.id, [box.p1[0], box.p1[1], box.p2[0], box.p2[1]])
+
+        if self.timing:
+            self.log_execution_time(
+                inspect.currentframe().f_code.co_name, time.time() - start_time
+            )
+
+    def select_and_match_indices(self, index, method=0):
+        if method == 0:
+            # rtree select intersecting
+            # Total elapsed time: 2349.37468457222
+            logging.info(f"Getting intersecting indices on index {index}")
+            indices = self.get_intersecting_indices(index)
+            logging.info(
+                f"Number of images being bundle adjusted: {len(indices)}"
+            )
+            self.find_matches_among_indices(indices)
+        elif method == 1:
+            # Always match all to all (full global badj)
+            # Total elapsed time: 836.8993334770203 s
+            camera_i = self.cameras[-1]
+            for camera_j in self.cameras:
+                if camera_i == camera_j:
+                    continue
+                self.find_matches(camera_i, camera_j)
+        elif method == 2:
+            # Match all to all but set only some as bFixed
+            # Total elapsed time: 720.8694500923157 s
+            camera_i = self.cameras[-1]
+            for camera_j in self.cameras:
+                if camera_i == camera_j:
+                    continue
+                self.find_matches(camera_i, camera_j)
+            logging.info(f"Getting intersecting indices on index {index}")
+            self.get_intersecting_indices(index)
+        elif method == 3:
+            # Match all to all but set only some as bFixed
+            # Total elapsed time: 644.3396918773651 s
+            camera_i = self.cameras[-1]
+            for camera_j in self.cameras:
+                if camera_i == camera_j:
+                    continue
+                self.find_matches(camera_i, camera_j)
+            logging.info(f"Getting intersecting indices on index {index}")
+            self.get_nearest_n_indices(index, 30)
+        elif method == 4:
+            # rtree select closest N
+            # Total elapsed time: 634.3631505966187
+            logging.info(f"Getting intersecting indices on index {index}")
+            indices = self.get_nearest_n_indices(index, 30)
+            logging.info(
+                f"Number of images being bundle adjusted: {len(indices)}"
+            )
+            self.find_matches_among_indices(indices)
+
+
     def get_intersecting_indices(self, at):
+        if self.timing:
+            start_time = time.time()
+
+        camera = self.cameras[at]
+        box = camera.quad.getBoundingBox()
+        camera.bFixed = False
+        indices = list(set(self.idx_boxes.intersection([box.p1[0], box.p1[1], box.p2[0], box.p2[1]])))
+
+        for i, other_camera in enumerate(self.cameras):
+            if i == camera.id:
+                continue
+            elif i in indices:
+                other_camera.color = camera.color
+                other_camera.bFixed = False
+            else:
+                other_camera.bFixed = True
+
+        if self.timing:
+            stop_time = time.time()
+            self.log_execution_time(
+                inspect.currentframe().f_code.co_name, stop_time - start_time
+            )
+
+        return indices
+
+    def get_nearest_n_indices(self, at, n):
         if self.timing:
             start_time = time.time()
 
         camera = self.cameras[at]
         center = self.world_centers[camera.id]
         camera.bFixed = False
-        indices = list(set(self.idx.nearest((center[0], center[1]), 25)))
+        indices = list(set(self.idx_centers.nearest((center[0], center[1]), n)))
 
         for i, other_camera in enumerate(self.cameras):
             if i == camera.id:
@@ -712,12 +800,12 @@ class Slam2DIncremental(Visus.Slam):
                 inspect.currentframe().f_code.co_name, stop_time - start_time
             )
 
-    def find_nearby_matches(self, camera):
+    def find_nearest_n_matches(self, camera, n):
         if self.timing:
             start_time = time.time()
 
         center = self.world_centers[camera.id]
-        nearby = list(set(self.idx.nearest((center[0], center[1]), 49)))
+        nearby = list(set(self.idx_centers.nearest((center[0], center[1]), n)))
 
         for i, v in enumerate(nearby):
             if v == camera.id:
@@ -1469,7 +1557,8 @@ class Slam2DIncremental(Visus.Slam):
             return 0
 
         # We have already set matches for these two cameras
-        if camera2.getEdge(camera1).isGood():
+        edge = camera2.getEdge(camera1)
+        if edge is None or edge.isGood():
             return 0
 
         matches, h, err = FindMatches(
