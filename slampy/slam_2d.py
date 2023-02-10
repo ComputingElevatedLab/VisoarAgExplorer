@@ -20,6 +20,8 @@ from .image_provider_lumenera import ImageProviderLumenera
 from .image_provider_micasense import ImageProviderRedEdge
 from .image_provider_generic import ImageProviderGeneric
 
+from cba.cba import CBA
+
 
 # ///////////////////////////////////////////////////////////////////
 def ComposeImage(v, axis):
@@ -782,41 +784,51 @@ class Slam2D(Slam):
                 self.debugMatchesGraph()
 
 
-        # This is the dataflow for bundle adjustment in slam.cpp
-        #for i, camera2 in enumerate(self.cameras):
-            #print('New Cam2 Edges ----------- \n\n')
-            # print(str(camera2.pose.q.w) + ' ' + str(camera2.pose.q.x) + ' ' + ' ' + str(camera2.pose.q.y) +
-            #      ' ' + str(camera2.pose.q.z) + ' ' + str(camera2.pose.t.x) + ' ' + str(camera2.pose.t.y) +
-            #      ' ' + str(camera2.pose.t.z))
-            # setVertexID(i)
-            # setVertexFixed(camera2.bFixed)
-            # camera.ba.vertex=vertex
-            # optimizer add vertex
-            #for camera1 in camera2.getGoodLocalCameras():
-                #if camera1.id < camera2.id:
-                    #for match in camera2.getEdge(camera1).matches:
-                        #print('camera Edges ----------- \n\n')
-                        #print(camera1.keypoints[match.queryIdx])
-                        #print(camera2.keypoints[match.trainIdx].x)
-                        #camera2.keypoints[match.trainIdx].x = 5
-                        #print(camera2.keypoints[match.trainIdx].x)
-                        #print(self.calibration.f)
-                        #print(self.calibration.cx)
-                        #print(self.calibration.cy)
-                        #optimizer add edge Visus::KeyPoint
-                        #pass
+        useGPU = True
 
         if self.do_bundle_adjustment:
-            print("Doing bundle adjustment...")
-            tolerances = (10.0 * self.ba_tolerance, 1.0 * self.ba_tolerance)
-            self.startAction(len(tolerances), "Refining solution...")
-            for I, tolerance in enumerate(tolerances):
-                self.advanceAction(I)
-                self.bundleAdjustment(tolerance)
-                self.removeOutlierMatches(self.max_reproj_error * self.width)
-                self.removeDisconnectedCameras()
-                self.removeCamerasWithTooMuchSkew()
-            self.endAction()
+            if useGPU:
+                print('Doing bundle adjustment with GPU...')
+                # This is the dataflow for bundle adjustment in slam.cpp
+                cba = CBA()
+                cba.setCalibration(self.calibration.f, self.calibration.f, self.calibration.cx, self.calibration.cy)
+                print('Calibration: f, cx, cy ' + str(self.calibration.f) + " " + str(self.calibration.cx) + " " + str(self.calibration.cy))
+                print('\n\n')
+                ### need an xyz for the calibration
+                # cba.addLandmarkVertex(0,[self.calibration.cx, self.calibration.cy, self.calibration.cz], self.calibration.bFixed)
+
+                for i, camera2 in enumerate(self.cameras):
+                    # print('New Cam2 Edges ----------- \n\n')
+                    # landmark is assumed to be pose.t(xyz) this may be wrong
+                    # id is id+1 because 0 is calibration, all IDs will be +1 for consistency
+                    cba.addVertex(camera2.id + 1, [camera2.pose.q.w, camera2.pose.q.x, camera2.pose.q.y, camera2.pose.q.z],
+                                  [camera2.pose.t.x, camera2.pose.t.y, camera2.pose.t.z], camera2.bFixed)
+                    cba.addLandmarkVertex(camera2.id + 1, [camera2.pose.t.x, camera2.pose.t.y, camera2.pose.t.z], camera2.bFixed)
+                    for camera1 in camera2.getGoodLocalCameras():
+                        if camera1.id < camera2.id:
+                            for match in camera2.getEdge(camera1).matches:
+                                # print('camera Edges ----------- \n\n')
+                                cba.addEdge(camera1.id + 1, camera2.id + 1,
+                                            [camera1.keypoints[match.queryIdx].x, camera1.keypoints[match.queryIdx].y])
+                print("\n\nGPU INIT")
+                cba.initialize()
+                print('GPU Optimize')
+                # out of bounds error in sparse_block_matrix.cpp
+                # blocks, brows, nnz ... something to do with these
+                cba.optimize()
+
+
+            else:
+                print("Doing bundle adjustment...")
+                tolerances = (10.0 * self.ba_tolerance, 1.0 * self.ba_tolerance)
+                self.startAction(len(tolerances), "Refining solution...")
+                for I, tolerance in enumerate(tolerances):
+                    self.advanceAction(I)
+                    self.bundleAdjustment(tolerance)
+                    self.removeOutlierMatches(self.max_reproj_error * self.width)
+                    self.removeDisconnectedCameras()
+                    self.removeCamerasWithTooMuchSkew()
+                self.endAction()
         else:
             print("Skipping bundle adjustment...")
 

@@ -24,92 +24,155 @@ class CBA{
 	private:
 		cuba::CudaBundleAdjustment::Ptr optimizerGPU;
 		cuba::CameraParams camera;
-		Eigen::Matrix<double, 3, 1> Kvertex;
-		cuba::LandmarkVertex *landMark;
+		//Eigen::Matrix<double, 3, 1> Kvertex;
+		std::vector<cuba::LandmarkVertex*> landMarks;
 		std::vector<cuba::PoseVertex*> poses;
-		std::vector<cuba::StereoEdge*> edges;
-		int calID;
-		
-		
+		std::vector<cuba::MonoEdge*> edges;
+
 	public:
+		double landMarkData[3];
+		double poseData[7];
+
+
 	CBA(){
 		optimizerGPU = cuba::CudaBundleAdjustment::create();
 	}
-	
+
 	void cleanup(){
-		for(auto &pv: poses){
+		for(auto pv: poses){
 			delete pv;
 		}
-		for(auto &se: edges){
+		for(auto se: edges){
 			delete se;
 		}
+		for(auto lmv: landMarks){
+			delete lmv;
+		}
 	}
-	
+
 	void initialize(){
 		optimizerGPU->initialize();
 	}
-	
-	void optimize(){		
-		optimizerGPU->optimize(1);
-	}
-	
+
+
 	// calibration in rt-slam only has f, cx, cy
-	void setCalibration(double &fx, double &fy, double &cx, double &cy, double &bf){		
+	void setCalibration(double fx, double fy, double cx, double cy){
 		camera.fx = fx;
 		camera.fy = fy;
 		camera.cx = cx;
 		camera.cy = cy;
-		camera.bf = bf;
+		camera.bf = fx; // Stereo baseline times fx
 	}
-	
-	void setCalibrationVertex(int &id, double (&ary)[3], int &fixed){
-		calID = id;
-		Kvertex = Eigen::Matrix<double, 3, 1>(ary);
-		*landMark = cuba::LandmarkVertex(id, Kvertex, fixed);
-		optimizerGPU->addLandmarkVertex(landMark);
-		
-	}	
-	
-	void addVertex(int &id, double (&qin)[4], double (&tin)[3], int &fixed){
+
+	void addLandmarkVertex(int id, double (ary)[3], int fixed){
+		auto xyz = Eigen::Matrix<double, 3, 1>(ary);
+		auto lmvertex = new cuba::LandmarkVertex(id, xyz, fixed);
+		landMarks.push_back(lmvertex);
+		optimizerGPU->addLandmarkVertex(lmvertex);
+	}
+
+
+	void addVertex(int id, double (qin)[4], double (tin)[3], int fixed){
 		auto q = Eigen::Quaterniond(qin);
 		auto t = Eigen::Matrix<double, 3, 1>(tin);
 		auto pv = new cuba::PoseVertex(id, q, t, camera, fixed);
 		poses.push_back(pv);
 		optimizerGPU->addPoseVertex(pv);
 	}
-	
-	void addEdge(int &id1, int &id2, double (&ary)[4]){
-		/*
-		auto measurement = Eigen::Matrix<double, 4, 1>(ary); // cuba only accepts size 3
-		auto info = Eigen::Matrix<double, 3, 1>::Identity(); // cuba expects a double, not array
+
+	void addEdge(int id1, int id2, double (ary)[2]){
+
+		auto measurement = Eigen::Matrix<double, 2, 1>(ary); // cuba only accepts size 2
+		auto info = 1.0; //Eigen::Matrix<double, 4, 1>::Identity(); // cuba expects a double, not array // Information is different even in cubas examples between gpu and cpu
 		auto v1 = optimizerGPU->poseVertex(id1);
-		auto v2 = optimizerGPU->poseVertex(calID); // cuba wants a LandmarkVertex, but we only have PoseVertex
-		auto edge = new cuba::StereoEdge(measurement, info, v1, v2);
+		auto v2 = optimizerGPU->landmarkVertex(id2); // cuba wants a LandmarkVertex, but we only have PoseVertex
+		auto edge = new cuba::MonoEdge(measurement, info, v1, v2);
 		edges.push_back(edge);
-		optimizerGPU->addStereoEdge(edge);
-		*/
+		optimizerGPU->addMonocularEdge(edge);
+
 	}
-	
+
+	void optimize(){
+		optimizerGPU->optimize(1);
+	}
+
 	void optimize(int n){
 		optimizerGPU->optimize(n);
 	}
-	
-	
-	
-	
+
+	void clear(){
+		optimizerGPU->clear();
+	}
+
+	double * getLandMark(int id){
+		auto lmd = optimizerGPU->landmarkVertex(id)->Xw.data();
+		landMarkData[0] = lmd[0];
+		landMarkData[1] = lmd[1];
+		landMarkData[2] = lmd[2];
+		return landMarkData;
+	}
+
+	double * getPoseVertex(int id){
+		auto pv = optimizerGPU->poseVertex(id);
+		poseData[0] = pv->q.w();
+		poseData[1] = pv->q.x();
+		poseData[2] = pv->q.y();
+		poseData[3] = pv->q.z();
+		poseData[4] = pv->t.x();
+		poseData[5] = pv->t.y();
+		poseData[6] = pv->t.z();
+
+		return poseData;
+	}
+
 };
 
-int main(){
-	//auto optimizerGPU = cuba::CudaBundleAdjustment::create();
-	CBA cba = CBA();
-	printf("\n\nPass\n\n");
-	
-	return 0;
+extern "C"
+{
+	CBA * CBA_new(){return new CBA();}
+
+	void CBA_cleanup(CBA * cba){cba->cleanup();}
+
+	void CBA_initialize(CBA * cba){cba->initialize();}
+
+	void CBA_setCalibration(CBA * cba, double fx, double fy, double cx, double cy){
+		cba->setCalibration(fx,fy,cx,cy);
+	}
+
+	void CBA_addLandmarkVertex(CBA * cba, int id, double (ary)[3], int fixed){
+		cba->addLandmarkVertex(id, ary, fixed);
+	}
+
+
+	void CBA_addVertex(CBA * cba, int id, double (qin)[4], double (tin)[3], int fixed){
+		cba->addVertex(id,qin,tin,fixed);
+	}
+
+	void CBA_addEdge(CBA * cba, int id1, int id2, double (ary)[2]){
+		cba->addEdge(id1, id2, ary);
+	}
+
+	void CBA_optimize(CBA * cba){
+		cba->optimize();
+	}
+
+	void CBA_optimize_n(CBA * cba, int n){
+		cba->optimize(n);
+	}
+
+	void CBA_clear(CBA * cba){
+		cba->clear();
+	}
+
+	double * CBA_getLandMark(CBA * cba, int id){
+		return cba->getLandMark(id);
+	}
+
+	double * CBA_getPoseVertex(CBA * cba, int id){
+		return cba->getPoseVertex(id);
+	}
+
 }
 
+
 #endif
-
-/*
-
-
-*/

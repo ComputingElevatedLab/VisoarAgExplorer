@@ -4,7 +4,7 @@ project(cba)
 
 
 if (CMAKE_COMPILER_IS_GNUCXX)
-	set(CMAKE_CXX_FLAGS "-O3 -Wall")
+	set(CMAKE_CXX_FLAGS "-g3 -Wall -fPIC")
 endif()
 
 if (WIN32)
@@ -16,6 +16,8 @@ if (WIN32)
 endif()
 
 find_package(CUDA 11.8 REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 
 
@@ -31,6 +33,6 @@ include_directories(${EIGEN3_INCLUDE_DIR})
 
 
 file(GLOB srcs ./*.cpp ./*.h* ${SAMPLE_UTILITY_DIR}/*.cpp ${SAMPLE_UTILITY_DIR}/*.h*)
-add_executable(cba ${srcs})
+add_library(cba SHARED ${srcs})
 target_link_libraries(cba cuda_bundle_adjustment cusparse cusolver ${CUDA_LIBRARY} cudart rt  )
 
