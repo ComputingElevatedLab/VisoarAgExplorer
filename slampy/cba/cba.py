@@ -16,10 +16,13 @@ class CBA(object):
         lib.CBA_setCalibration.argtypes = [ctypes.c_void_p, ctypes.c_double, ctypes.c_double, ctypes.c_double, ctypes.c_double]
         lib.CBA_setCalibration.restype = ctypes.c_void_p
 
+        lib.CBA_addCamera.argtypes = [ctypes.c_void_p, ctypes.c_double, ctypes.c_double, ctypes.c_double, ctypes.c_double, ctypes.c_double]
+        lib.CBA_addCamera.restype = ctypes.c_void_p
+
         lib.CBA_addLandmarkVertex.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_double * 3, ctypes.c_int]
         lib.CBA_addLandmarkVertex.restype = ctypes.c_void_p
 
-        lib.CBA_addVertex.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_double * 4, ctypes.c_double * 3, ctypes.c_int]
+        lib.CBA_addVertex.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_double * 4, ctypes.c_double * 3, ctypes.c_int, ctypes.c_int]
         lib.CBA_addVertex.restype = ctypes.c_void_p
 
         lib.CBA_addEdge.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_int, ctypes.c_double * 2]
@@ -55,15 +58,19 @@ class CBA(object):
         lib.CBA_setCalibration(self.obj, fx, fy, cx, cy)
         pass
 
+    def addCamera(self, fx, fy, cx, cy, bf):
+        lib.CBA_addCamera(self.obj, fx, fy, cx, cy, bf)
+        pass
+
     def addLandmarkVertex(self, id, ary, fixed):
         ary = (ctypes.c_double * 3)(*ary)
         lib.CBA_addLandmarkVertex(self.obj, id, ary, fixed)
         pass
 
-    def addVertex(self, id, qin, tin, fixed):
+    def addVertex(self, id, qin, tin, fixed, cameraID):
         qin = (ctypes.c_double * 4)(*qin)
         tin = (ctypes.c_double * 3)(*tin)
-        lib.CBA_addVertex(self.obj, id, qin, tin, fixed)
+        lib.CBA_addVertex(self.obj, id, qin, tin, fixed, cameraID)
         pass
 
     def addEdge(self, id1, id2, ary):
@@ -84,8 +91,13 @@ class CBA(object):
         pass
 
     def getLandMark(self, id):
-        return lib.CBA_getLandMark(self.obj, id)
+        ary = lib.CBA_getLandMark(self.obj, id)
+        return [ary[0], ary[1], ary[2]]
 
     def getPoseVertex(self, id):
-        return lib.CBA_getPoseVertex(self.obj, id)
+        ary = lib.CBA_getPoseVertex(self.obj, id)
+        return [ary[0], ary[1], ary[2], ary[3], ary[4], ary[5], ary[6]]
 
+    def getPoseRotated(self, id):
+        ary = lib.CBA_getPoseVertex(self.obj, id)
+        return [ary[3], ary[0], ary[1], ary[2], ary[4], ary[5], ary[6]]

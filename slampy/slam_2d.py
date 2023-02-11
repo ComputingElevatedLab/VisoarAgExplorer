@@ -786,37 +786,46 @@ class Slam2D(Slam):
 
         useGPU = True
 
+
         if self.do_bundle_adjustment:
             if useGPU:
                 print('Doing bundle adjustment with GPU...')
                 # This is the dataflow for bundle adjustment in slam.cpp
                 cba = CBA()
-                cba.setCalibration(self.calibration.f, self.calibration.f, self.calibration.cx, self.calibration.cy)
-                print('Calibration: f, cx, cy ' + str(self.calibration.f) + " " + str(self.calibration.cx) + " " + str(self.calibration.cy))
-                print('\n\n')
-                ### need an xyz for the calibration
-                # cba.addLandmarkVertex(0,[self.calibration.cx, self.calibration.cy, self.calibration.cz], self.calibration.bFixed)
 
                 for i, camera2 in enumerate(self.cameras):
-                    # print('New Cam2 Edges ----------- \n\n')
-                    # landmark is assumed to be pose.t(xyz) this may be wrong
-                    # id is id+1 because 0 is calibration, all IDs will be +1 for consistency
-                    cba.addVertex(camera2.id + 1, [camera2.pose.q.w, camera2.pose.q.x, camera2.pose.q.y, camera2.pose.q.z],
-                                  [camera2.pose.t.x, camera2.pose.t.y, camera2.pose.t.z], camera2.bFixed)
-                    cba.addLandmarkVertex(camera2.id + 1, [camera2.pose.t.x, camera2.pose.t.y, camera2.pose.t.z], camera2.bFixed)
+                    cba.addCamera(camera2.pose.t.x, camera2.pose.t.y, self.calibration.cx, self.calibration.cy, self.calibration.f)
+                    #cba.addCamera(camera2.getWorldCenter()[0], camera2.getWorldCenter()[1],
+                    #              self.calibration.cx, self.calibration.cy, self.calibration.f)
+                    cba.addVertex(camera2.id, [camera2.pose.q.w, camera2.pose.q.x,
+                                                   camera2.pose.q.y, camera2.pose.q.z],
+                                  [camera2.pose.t.x, camera2.pose.t.y, camera2.pose.t.z], 0, camera2.id)
+                    # Need the camera's Xw
+                    cba.addLandmarkVertex(camera2.id, [camera2.pose.t.x, camera2.pose.t.y, camera2.pose.t.z], 1)
+                    #cba.addLandmarkVertex(camera2.id, [camera2.getWorldCenter()[0],
+                    #                                       camera2.getWorldCenter()[1],
+                    #                                       camera2.getWorldCenter()[2]], 1)
                     for camera1 in camera2.getGoodLocalCameras():
                         if camera1.id < camera2.id:
                             for match in camera2.getEdge(camera1).matches:
                                 # print('camera Edges ----------- \n\n')
-                                cba.addEdge(camera1.id + 1, camera2.id + 1,
-                                            [camera1.keypoints[match.queryIdx].x, camera1.keypoints[match.queryIdx].y])
+                                cba.addEdge(camera1.id, camera2.id, [camera1.keypoints[match.queryIdx].x, camera1.keypoints[match.queryIdx].y])
+                                #cba.addEdge(camera1.id, camera2.id, [camera2.keypoints[match.trainIdx].x, camera2.keypoints[match.trainIdx].y])
+
+                GPUstart = time.time()
                 print("\n\nGPU INIT")
                 cba.initialize()
                 print('GPU Optimize')
-                # out of bounds error in sparse_block_matrix.cpp
-                # blocks, brows, nnz ... something to do with these
                 cba.optimize()
+                cba.optimize_n(100)
 
+                print('GPU Bundle Adjust in: ' + str((time.time() - GPUstart)*1000))
+
+                for i, camera2 in enumerate(self.cameras):
+                    [camera2.pose.q.w, camera2.pose.q.x, camera2.pose.q.y, camera2.pose.q.z, camera2.pose.t.x,
+                     camera2.pose.t.y, camera2.pose.t.z] = cba.getPoseVertex(camera2.id)
+                    [camera2.pose.t.x, camera2.pose.t.y, camera2.pose.t.z] = cba.getLandMark(camera2.id)
+                cba.cleanup()
 
             else:
                 print("Doing bundle adjustment...")

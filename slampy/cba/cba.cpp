@@ -10,6 +10,7 @@
 #include <thread>
 #include <numeric>
 #include <vector>
+#include <iostream>
 
 
 #if WIN32
@@ -23,7 +24,8 @@
 class CBA{
 	private:
 		cuba::CudaBundleAdjustment::Ptr optimizerGPU;
-		cuba::CameraParams camera;
+		cuba::CameraParams* camera;
+		std::vector<cuba::CameraParams*> cameras;
 		//Eigen::Matrix<double, 3, 1> Kvertex;
 		std::vector<cuba::LandmarkVertex*> landMarks;
 		std::vector<cuba::PoseVertex*> poses;
@@ -36,6 +38,15 @@ class CBA{
 
 	CBA(){
 		optimizerGPU = cuba::CudaBundleAdjustment::create();
+
+/*
+		const cuba::RobustKernelType robustKernelType = cuba::RobustKernelType::HUBER;
+	    const double deltaMono = sqrt(5.991);
+	    const double deltaStereo = sqrt(7.815);
+
+        optimizerGPU->setRobustKernels(robustKernelType, deltaMono, cuba::EdgeType::MONOCULAR);
+        optimizerGPU->setRobustKernels(robustKernelType, deltaStereo, cuba::EdgeType::STEREO);
+**/
 	}
 
 	void cleanup(){
@@ -48,6 +59,9 @@ class CBA{
 		for(auto lmv: landMarks){
 			delete lmv;
 		}
+		for(auto cam: cameras){
+		    delete cam;
+		}
 	}
 
 	void initialize(){
@@ -57,11 +71,23 @@ class CBA{
 
 	// calibration in rt-slam only has f, cx, cy
 	void setCalibration(double fx, double fy, double cx, double cy){
-		camera.fx = fx;
-		camera.fy = fy;
-		camera.cx = cx;
-		camera.cy = cy;
-		camera.bf = fx; // Stereo baseline times fx
+	    camera = new cuba::CameraParams();
+		camera->fx = fx;
+		camera->fy = fy;
+		camera->cx = cx;
+		camera->cy = cy;
+		camera->bf = 1.0; // Stereo baseline times fx
+		cameras.push_back(camera);
+	}
+
+	void addCamera(double fx, double fy, double cx, double cy, double bf){
+	    auto cam = new cuba::CameraParams();
+	    cam->fx = fx;
+		cam->fy = fy;
+		cam->cx = cx;
+		cam->cy = cy;
+		cam->bf = bf;
+		cameras.push_back(cam);
 	}
 
 	void addLandmarkVertex(int id, double (ary)[3], int fixed){
@@ -72,10 +98,10 @@ class CBA{
 	}
 
 
-	void addVertex(int id, double (qin)[4], double (tin)[3], int fixed){
-		auto q = Eigen::Quaterniond(qin);
+	void addVertex(int id, double qin[4], double (tin)[3], int fixed, int cameraID){
+		auto q = Eigen::Quaterniond(qin[0], qin[1], qin[2], qin[3]);
 		auto t = Eigen::Matrix<double, 3, 1>(tin);
-		auto pv = new cuba::PoseVertex(id, q, t, camera, fixed);
+		auto pv = new cuba::PoseVertex(id, q, t, *cameras[cameraID], fixed);
 		poses.push_back(pv);
 		optimizerGPU->addPoseVertex(pv);
 	}
@@ -139,13 +165,17 @@ extern "C"
 		cba->setCalibration(fx,fy,cx,cy);
 	}
 
+	void CBA_addCamera(CBA * cba, double fx, double fy, double cx, double cy, double bf){
+	    cba->addCamera(fx, fy, cx, cy, bf);
+	}
+
 	void CBA_addLandmarkVertex(CBA * cba, int id, double (ary)[3], int fixed){
 		cba->addLandmarkVertex(id, ary, fixed);
 	}
 
 
-	void CBA_addVertex(CBA * cba, int id, double (qin)[4], double (tin)[3], int fixed){
-		cba->addVertex(id,qin,tin,fixed);
+	void CBA_addVertex(CBA * cba, int id, double (qin)[4], double (tin)[3], int fixed, int cameraID){
+		cba->addVertex(id,qin,tin,fixed, cameraID);
 	}
 
 	void CBA_addEdge(CBA * cba, int id1, int id2, double (ary)[2]){
