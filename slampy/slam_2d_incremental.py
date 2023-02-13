@@ -534,20 +534,22 @@ class Slam2DIncremental(Visus.Slam):
 
     def select_and_match_indices(self, index, method=0):
         if method == 0:
-            # rtree select intersecting
-            # Total elapsed time: 2349.37468457222
+            # rtree select closest N
+            # Total elapsed time: 634.3631505966187
             logging.info(f"Getting intersecting indices on index {index}")
-            indices = self.get_intersecting_indices(index)
+            indices = self.get_nearest_n_indices(index, 30)
             logging.info(f"Number of images being bundle adjusted: {len(indices)}")
             self.find_matches_among_indices(indices)
         elif method == 1:
-            # Always match all to all (full global badj)
-            # Total elapsed time: 836.8993334770203 s
+            # Match all to all but set only some as bFixed
+            # Total elapsed time: 644.3396918773651 s
             camera_i = self.cameras[-1]
             for camera_j in self.cameras:
                 if camera_i == camera_j:
                     continue
                 self.find_matches(camera_i, camera_j)
+            logging.info(f"Getting intersecting indices on index {index}")
+            self.get_nearest_n_indices(index, 30)
         elif method == 2:
             # Match all to all but set only some as bFixed
             # Total elapsed time: 720.8694500923157 s
@@ -559,22 +561,23 @@ class Slam2DIncremental(Visus.Slam):
             logging.info(f"Getting intersecting indices on index {index}")
             self.get_intersecting_indices(index)
         elif method == 3:
-            # Match all to all but set only some as bFixed
-            # Total elapsed time: 644.3396918773651 s
+            # Always match all to all (full global badj)
+            # Total elapsed time: 836.8993334770203 s
             camera_i = self.cameras[-1]
             for camera_j in self.cameras:
                 if camera_i == camera_j:
                     continue
                 self.find_matches(camera_i, camera_j)
-            logging.info(f"Getting intersecting indices on index {index}")
-            self.get_nearest_n_indices(index, 30)
         elif method == 4:
-            # rtree select closest N
-            # Total elapsed time: 634.3631505966187
+            # rtree select intersecting
+            # Total elapsed time: 2349.37468457222
             logging.info(f"Getting intersecting indices on index {index}")
-            indices = self.get_nearest_n_indices(index, 30)
+            indices = self.get_intersecting_indices(index)
             logging.info(f"Number of images being bundle adjusted: {len(indices)}")
             self.find_matches_among_indices(indices)
+
+
+
 
     def get_intersecting_indices(self, at):
         camera = self.cameras[at]
