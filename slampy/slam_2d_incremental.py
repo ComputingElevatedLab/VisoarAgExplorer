@@ -37,7 +37,6 @@ class Slam2DIncremental(Visus.Slam):
         extractor,
         extraction_band,
         resize_scale,
-        timing,
     ):
         logging.info("Initializing Slam2DIncremental object")
         super(Slam2DIncremental, self).__init__()
@@ -59,7 +58,6 @@ class Slam2DIncremental(Visus.Slam):
 
         self.execution_times = {}
         self.extraction_band = extraction_band if extraction_band >= 1 else None
-        self.timing = timing
         self.world_centers = {}
         self.initial_multi_image = None
         self.initial_interleaved_image = None
@@ -131,9 +129,6 @@ class Slam2DIncremental(Visus.Slam):
         )
 
     def add_image(self, image_path):
-        if self.timing:
-            start_time = time.time()
-
         self.provider.addImage([image_path])
         image = self.provider.images[-1]
         self.load_image_metadata(image)
@@ -144,17 +139,9 @@ class Slam2DIncremental(Visus.Slam):
         image.alt -= self.plane
         self.adjust_image_yaw(image)
 
-        if self.timing:
-            self.log_execution_time(
-                inspect.currentframe().f_code.co_name, time.time() - start_time
-            )
-
         return image
 
     def add_multi_band_image(self, image_path):
-        if self.timing:
-            start_time = time.time()
-
         band = int(image_path[-5])
         image_bands = []
         for i in range(1, self.band_range + 1):
@@ -204,42 +191,18 @@ class Slam2DIncremental(Visus.Slam):
 
         image.alt -= self.plane
 
-        if self.timing:
-            self.log_execution_time(
-                inspect.currentframe().f_code.co_name, time.time() - start_time
-            )
-
         return image, panel_time
 
     def load_image_metadata(self, image):
-        if self.timing:
-            start_time = time.time()
-
         self.load_metadata(image)
         self.load_gps_from_metadata(image)
         self.load_yaw_from_metadata(image)
 
-        if self.timing:
-            self.log_execution_time(
-                inspect.currentframe().f_code.co_name, time.time() - start_time
-            )
-
     def load_metadata(self, image):
-        if self.timing:
-            start_time = time.time()
-
         filename = image.filenames[0]
         image.metadata = self.reader.readMetadata(filename)
 
-        if self.timing:
-            self.log_execution_time(
-                inspect.currentframe().f_code.co_name, time.time() - start_time
-            )
-
     def load_gps_from_metadata(self, image):
-        if self.timing:
-            start_time = time.time()
-
         logging.info("Loading GPS latitude, longitude, and altitude from metadata")
 
         lat = img_utils.FindMetadata(image.metadata, ["GPSLatitude", "Latitude", "lat"])
@@ -262,15 +225,7 @@ class Slam2DIncremental(Visus.Slam):
 
         logging.info(f"lat = {image.lat}, lon = {image.lon}, alt = {image.alt}")
 
-        if self.timing:
-            self.log_execution_time(
-                inspect.currentframe().f_code.co_name, time.time() - start_time
-            )
-
     def load_yaw_from_metadata(self, image):
-        if self.timing:
-            start_time = time.time()
-
         logging.info(f"Loading yaw from metadata")
 
         yaw = img_utils.FindMetadata(
@@ -291,15 +246,7 @@ class Slam2DIncremental(Visus.Slam):
             if yaw and "radians" not in yaw.lower():
                 image.yaw = np.radians(image.yaw)
 
-        if self.timing:
-            self.log_execution_time(
-                inspect.currentframe().f_code.co_name, time.time() - start_time
-            )
-
     def interpolate_gps(self):
-        if self.timing:
-            start_time = time.time()
-
         n = len(self.provider.images)
         for i, image in enumerate(self.provider.images):
             if not self.wrong_gps(image):
@@ -332,18 +279,10 @@ class Slam2DIncremental(Visus.Slam):
                     f"Error: could not interpolate GPS for {image.filenames[0]}"
                 )
 
-        if self.timing:
-            self.log_execution_time(
-                inspect.currentframe().f_code.co_name, time.time() - start_time
-            )
-
     def wrong_gps(self, image):
         return image.lat == 0.0 or image.lon == 0.0 or image.alt == 0.0
 
     def initialize_slam(self, image):
-        if self.timing:
-            start_time = time.time()
-
         if not image:
             return
 
@@ -388,39 +327,13 @@ class Slam2DIncremental(Visus.Slam):
 
         self.calibration = self.provider.calibration
 
-        if self.timing:
-            self.log_execution_time(
-                inspect.currentframe().f_code.co_name, time.time() - start_time
-            )
-
     def generate_multi_image(self, image):
-        if self.timing:
-            start_time = time.time()
-
-        multi_image = self.provider.generateMultiImage(image)
-
-        if self.timing:
-            self.log_execution_time(
-                inspect.currentframe().f_code.co_name, time.time() - start_time
-            )
-
-        return multi_image
+        return self.provider.generateMultiImage(image)
 
     def interleave_channels(self, multi_image):
-        if self.timing:
-            start_time = time.time()
-
         if len(multi_image) == 1:
             return multi_image[0]
-
-        interleaved_image = np.dstack(multi_image)
-
-        if self.timing:
-            self.log_execution_time(
-                inspect.currentframe().f_code.co_name, time.time() - start_time
-            )
-
-        return interleaved_image
+        return np.dstack(multi_image)
 
     def guess_plane(self, image):
         if self.multi_band:
@@ -444,9 +357,6 @@ class Slam2DIncremental(Visus.Slam):
         return 0
 
     def adjust_image_yaw(self, image):
-        if self.timing:
-            start_time = time.time()
-
         if self.multi_band:
             image.yaw -= self.provider.yaw_offset / 2
         else:
@@ -460,33 +370,16 @@ class Slam2DIncremental(Visus.Slam):
             f"{image.filenames[0]} - {image.yaw} radians {np.degrees(image.yaw)} degrees"
         )
 
-        if self.timing:
-            self.log_execution_time(
-                inspect.currentframe().f_code.co_name, time.time() - start_time
-            )
-
     def add_camera(self, image):
-        if self.timing:
-            start_time = time.time()
-
         camera = Visus.Camera()
         camera.id = len(self.cameras)
         camera.color = Visus.Color.random()
         for filename in image.filenames:
             camera.filenames.append(filename)
         super().addCamera(camera)
-
-        if self.timing:
-            self.log_execution_time(
-                inspect.currentframe().f_code.co_name, time.time() - start_time
-            )
-
         return self.cameras[-1]
 
     def create_idx(self, camera):
-        if self.timing:
-            start_time = time.time()
-
         camera.idx_filename = f"./idx/{camera.id:04d}.idx"
         field = Visus.Field("myfield", self.dtype)
         field.default_layout = "row_major"
@@ -499,15 +392,7 @@ class Slam2DIncremental(Visus.Slam):
             dims=(self.width, self.height),
         )
 
-        if self.timing:
-            self.log_execution_time(
-                inspect.currentframe().f_code.co_name, time.time() - start_time
-            )
-
     def set_initial_pose(self, image, camera):
-        if self.timing:
-            start_time = time.time()
-
         x, y = GPSUtils.gpsToLocalCartesian(image.lat, image.lon, self.lat0, self.lon0)
         self.world_centers[camera.id] = Visus.Point3d(x, y, image.alt)
         q = Visus.Quaternion(Visus.Point3d(0, 0, 1), -image.yaw) * Visus.Quaternion(
@@ -515,26 +400,20 @@ class Slam2DIncremental(Visus.Slam):
         )
         camera.pose = Visus.Pose(q, self.world_centers[camera.id]).inverse()
 
-        if self.timing:
-            self.log_execution_time(
-                inspect.currentframe().f_code.co_name, time.time() - start_time
-            )
-
     def refresh_quads(self):
-        if self.timing:
-            start_time = time.time()
-
         self.refreshQuads()
 
-        if self.timing:
-            self.log_execution_time(
-                inspect.currentframe().f_code.co_name, time.time() - start_time
-            )
+    def set_all_cameras(self, camera, n):
+        center = self.world_centers[camera.id]
+        camera.bFixed = False
+        indices = list(set(self.idx_centers.nearest((center[0], center[1]), n)))
+
+        for index in indices:
+            other_camera = self.cameras[index]
+            camera.addLocalCamera(other_camera)
+            other_camera.addLocalCamera(camera)
 
     def set_local_cameras(self):
-        if self.timing:
-            start_time = time.time()
-
         box = self.getQuadsBox()
         x1i = math.floor(box.p1[0])
         x2i = math.ceil(box.p2[0])
@@ -640,47 +519,18 @@ class Slam2DIncremental(Visus.Slam):
                 [0, 0, 0],
             )
 
-        if self.timing:
-            self.log_execution_time(
-                inspect.currentframe().f_code.co_name, time.time() - start_time
-            )
-
     def get_distance_threshold(self, x, y):
-        if self.timing:
-            start_time = time.time()
-
         x_center = self.cameras[x].getWorldCenter()
         y_center = self.cameras[y].getWorldCenter()
         self.distance_threshold = self.cartesian_distance(x_center, y_center) * 1.5
 
-        if self.timing:
-            self.log_execution_time(
-                inspect.currentframe().f_code.co_name, time.time() - start_time
-            )
-
     def insert_camera_center_into_spatial_index(self, camera):
-        if self.timing:
-            start_time = time.time()
-
         center = self.world_centers[camera.id]
         self.idx_centers.insert(camera.id, (center[0], center[1]))
 
-        if self.timing:
-            self.log_execution_time(
-                inspect.currentframe().f_code.co_name, time.time() - start_time
-            )
-
     def insert_camera_box_into_spatial_index(self, camera):
-        if self.timing:
-            start_time = time.time()
-
         box = camera.quad.getBoundingBox()
         self.idx_boxes.insert(camera.id, [box.p1[0], box.p1[1], box.p2[0], box.p2[1]])
-
-        if self.timing:
-            self.log_execution_time(
-                inspect.currentframe().f_code.co_name, time.time() - start_time
-            )
 
     def select_and_match_indices(self, index, method=0):
         if method == 0:
@@ -688,9 +538,7 @@ class Slam2DIncremental(Visus.Slam):
             # Total elapsed time: 2349.37468457222
             logging.info(f"Getting intersecting indices on index {index}")
             indices = self.get_intersecting_indices(index)
-            logging.info(
-                f"Number of images being bundle adjusted: {len(indices)}"
-            )
+            logging.info(f"Number of images being bundle adjusted: {len(indices)}")
             self.find_matches_among_indices(indices)
         elif method == 1:
             # Always match all to all (full global badj)
@@ -725,20 +573,20 @@ class Slam2DIncremental(Visus.Slam):
             # Total elapsed time: 634.3631505966187
             logging.info(f"Getting intersecting indices on index {index}")
             indices = self.get_nearest_n_indices(index, 30)
-            logging.info(
-                f"Number of images being bundle adjusted: {len(indices)}"
-            )
+            logging.info(f"Number of images being bundle adjusted: {len(indices)}")
             self.find_matches_among_indices(indices)
 
-
     def get_intersecting_indices(self, at):
-        if self.timing:
-            start_time = time.time()
-
         camera = self.cameras[at]
         box = camera.quad.getBoundingBox()
         camera.bFixed = False
-        indices = list(set(self.idx_boxes.intersection([box.p1[0], box.p1[1], box.p2[0], box.p2[1]])))
+        indices = list(
+            set(
+                self.idx_boxes.intersection(
+                    [box.p1[0], box.p1[1], box.p2[0], box.p2[1]]
+                )
+            )
+        )
 
         for i, other_camera in enumerate(self.cameras):
             if i == camera.id:
@@ -749,18 +597,9 @@ class Slam2DIncremental(Visus.Slam):
             else:
                 other_camera.bFixed = True
 
-        if self.timing:
-            stop_time = time.time()
-            self.log_execution_time(
-                inspect.currentframe().f_code.co_name, stop_time - start_time
-            )
-
         return indices
 
     def get_nearest_n_indices(self, at, n):
-        if self.timing:
-            start_time = time.time()
-
         camera = self.cameras[at]
         center = self.world_centers[camera.id]
         camera.bFixed = False
@@ -775,18 +614,9 @@ class Slam2DIncremental(Visus.Slam):
             else:
                 other_camera.bFixed = True
 
-        if self.timing:
-            stop_time = time.time()
-            self.log_execution_time(
-                inspect.currentframe().f_code.co_name, stop_time - start_time
-            )
-
         return indices
 
     def find_matches_among_indices(self, indices):
-        if self.timing:
-            start_time = time.time()
-
         for i, v in enumerate(indices):
             camera_i = self.cameras[v]
             for k in range(i + 1, len(indices)):
@@ -794,16 +624,7 @@ class Slam2DIncremental(Visus.Slam):
                 camera_j = self.cameras[j]
                 self.find_matches(camera_i, camera_j)
 
-        if self.timing:
-            stop_time = time.time()
-            self.log_execution_time(
-                inspect.currentframe().f_code.co_name, stop_time - start_time
-            )
-
     def find_nearest_n_matches(self, camera, n):
-        if self.timing:
-            start_time = time.time()
-
         center = self.world_centers[camera.id]
         nearby = list(set(self.idx_centers.nearest((center[0], center[1]), n)))
 
@@ -813,16 +634,7 @@ class Slam2DIncremental(Visus.Slam):
             other_camera = self.cameras[v]
             self.find_matches(camera, other_camera)
 
-        if self.timing:
-            stop_time = time.time()
-            self.log_execution_time(
-                inspect.currentframe().f_code.co_name, stop_time - start_time
-            )
-
     def get_local_ba_indices(self, at, previous):
-        if self.timing:
-            start_time = time.time()
-
         if previous:
             self.get_distance_threshold(at, previous[0])
         else:
@@ -862,11 +674,6 @@ class Slam2DIncremental(Visus.Slam):
                     self.find_matches(camera, other_camera)
                     other_camera.bFixed = False
 
-        if self.timing:
-            self.log_execution_time(
-                inspect.currentframe().f_code.co_name, time.time() - start_time
-            )
-
         return indices
 
     # Cartesian distance between two (x, y, z) coordinates
@@ -883,20 +690,10 @@ class Slam2DIncremental(Visus.Slam):
 
     def bundle_adjust(self, algorithm=""):
         start_time = time.time()
-
         self.bundleAdjustment(self.ba_tolerance, algorithm)
-
-        execution_time = time.time() - start_time
-        if self.timing:
-            self.log_execution_time(
-                inspect.currentframe().f_code.co_name, execution_time
-            )
-        return execution_time
+        return time.time() - start_time
 
     def create_visus_midx(self, suffix=""):
-        if self.timing:
-            start_time = time.time()
-
         if self.translation_offset:
             logging.info(f"Aligning visus{suffix}.midx to Google Maps")
         else:
@@ -1082,15 +879,7 @@ class Slam2DIncremental(Visus.Slam):
         else:
             logging.info(f"Created visus{suffix}.midx")
 
-        if self.timing:
-            self.log_execution_time(
-                inspect.currentframe().f_code.co_name, time.time() - start_time
-            )
-
     def create_single_image_midx(self):
-        if self.timing:
-            start_time = time.time()
-
         logging.info(f"Creating visus_initial.midx")
 
         camera = self.cameras[0]
@@ -1239,15 +1028,7 @@ class Slam2DIncremental(Visus.Slam):
         )
         logging.info(f"Created visus_initial.midx")
 
-        if self.timing:
-            self.log_execution_time(
-                inspect.currentframe().f_code.co_name, time.time() - start_time
-            )
-
     def create_google_no_dataset_midx(self):
-        if self.timing:
-            start_time = time.time()
-
         logging.info("Creating google-no-dataset.midx")
 
         with open(f"{self.output_dir}/google-no-dataset.midx", "w+") as outfile:
@@ -1256,29 +1037,13 @@ class Slam2DIncremental(Visus.Slam):
 
         logging.info("Created google-no-dataset.midx")
 
-        if self.timing:
-            self.log_execution_time(
-                inspect.currentframe().f_code.co_name, time.time() - start_time
-            )
-
     def create_google(self, suffix=""):
-        if self.timing:
-            start_time = time.time()
-
         if self.multi_band:
             self.create_google_xml(suffix)
         else:
             self.create_google_midx(suffix)
 
-        if self.timing:
-            self.log_execution_time(
-                inspect.currentframe().f_code.co_name, time.time() - start_time
-            )
-
     def create_google_midx(self, suffix=""):
-        if self.timing:
-            start_time = time.time()
-
         logging.info("Creating google.midx")
         lines = ["<dataset name='slam' typename='IdxMultipleDataset'>"]
         lines.append("<field name='voronoi'><code>output=voronoi()</code></field>")
@@ -1290,15 +1055,7 @@ class Slam2DIncremental(Visus.Slam):
         Visus.SaveTextDocument(f"{self.output_dir}/google.midx", "\n".join(lines))
         logging.info("Created google.midx")
 
-        if self.timing:
-            self.log_execution_time(
-                inspect.currentframe().f_code.co_name, time.time() - start_time
-            )
-
     def create_google_xml(self, suffix=""):
-        if self.timing:
-            start_time = time.time()
-
         logging.info("Creating google-multiband.xml")
 
         with open(f"{self.output_dir}/google-multiband.xml", "w+") as xml:
@@ -1347,15 +1104,7 @@ class Slam2DIncremental(Visus.Slam):
 
         logging.info("Created google-multiband.xml")
 
-        if self.timing:
-            self.log_execution_time(
-                inspect.currentframe().f_code.co_name, time.time() - start_time
-            )
-
     def debug_matches_graph(self):
-        if self.timing:
-            start_time = time.time()
-
         box = self.getQuadsBox()
         w = float(box.size()[0])
         h = float(box.size()[1])
@@ -1402,11 +1151,6 @@ class Slam2DIncremental(Visus.Slam):
 
         img_utils.SaveImage(f"{self.output_dir}/~matches.png", out)
 
-        if self.timing:
-            self.log_execution_time(
-                inspect.currentframe().f_code.co_name, time.time() - start_time
-            )
-
     def get_image_center(self, image):
         box = self.getQuadsBox()
         w = float(box.size()[0])
@@ -1417,9 +1161,6 @@ class Slam2DIncremental(Visus.Slam):
         return int((p[0] - box.p1[0]) * (W / w)), int(H - (p[1] - box.p1[1]) * (H / h))
 
     def debug_solution(self):
-        if self.timing:
-            start_time = time.time()
-
         box = self.getQuadsBox()
         w = float(box.size()[0])
         h = float(box.size()[1])
@@ -1447,34 +1188,16 @@ class Slam2DIncremental(Visus.Slam):
 
         img_utils.SaveImage(f"{self.output_dir}/~solution.png", out)
 
-        if self.timing:
-            self.log_execution_time(
-                inspect.currentframe().f_code.co_name, time.time() - start_time
-            )
-
     def quad_to_screen(self, p, box):
-        if self.timing:
-            start_time = time.time()
-
         w = float(box.size()[0])
         h = float(box.size()[1])
         W = int(4096)
         H = int(h * (W / w))
-        ret_val = int(0 + (p[0] - box.p1[0]) * (W / w)), int(
+        return int(0 + (p[0] - box.p1[0]) * (W / w)), int(
             H - (p[1] - box.p1[1]) * (H / h)
         )
 
-        if self.timing:
-            self.log_execution_time(
-                inspect.currentframe().f_code.co_name, time.time() - start_time
-            )
-
-        return ret_val
-
     def interleave_and_write_image(self, image, camera):
-        if self.timing:
-            start_time = time.time()
-
         if self.initial_multi_image:
             interleaved_image = self.initial_interleaved_image
             self.initial_multi_image = None
@@ -1485,22 +1208,13 @@ class Slam2DIncremental(Visus.Slam):
             multi_image = self.generate_multi_image(image)
             interleaved_image = self.interleave_channels(multi_image)
             generate_time = time.time() - generate_start
-            logging.info(
-                f"Interleaved image generated in: {generate_time} s"
-            )
+            logging.info(f"Interleaved image generated in: {generate_time} s")
 
         dataset_start = time.time()
         data = Visus.LoadDataset(f"{self.output_dir}/{camera.idx_filename}")
         data.write(interleaved_image)
         write_time = time.time() - dataset_start
-        logging.info(
-            f"Wrote interleaved image data in: {write_time} s"
-        )
-
-        if self.timing:
-            self.log_execution_time(
-                inspect.currentframe().f_code.co_name, time.time() - start_time
-            )
+        logging.info(f"Wrote interleaved image data in: {write_time} s")
 
         return interleaved_image, generate_time, write_time
 
@@ -1541,12 +1255,10 @@ class Slam2DIncremental(Visus.Slam):
             super().saveKeyPoints(camera, f"{self.output_dir}/key_points/{camera.id}")
 
         convert_time = time.time() - start_time
-        logging.info(f"Done extracting and converting key points from {camera.filenames[0]} in {convert_time} s")
+        logging.info(
+            f"Done extracting and converting key points from {camera.filenames[0]} in {convert_time} s"
+        )
 
-        if self.timing:
-            self.log_execution_time(
-                inspect.currentframe().f_code.co_name, convert_time
-            )
         return convert_time, feature_time, extract_time, len(key_points)
 
     def find_matches(self, camera1, camera2):
@@ -1587,28 +1299,18 @@ class Slam2DIncremental(Visus.Slam):
         camera2.getEdge(camera1).setMatches(matches, str(num_matches))
 
         execution_time = time.time() - start_time
-        if self.timing:
-            self.log_execution_time(
-                inspect.currentframe().f_code.co_name, execution_time
-            )
-        logging.info(f"Found num_matches({num_matches}) matches in ms: {execution_time * 1000}")
+        logging.info(
+            f"Found num_matches({num_matches}) matches in ms: {execution_time * 1000}"
+        )
 
         return num_matches
 
     def find_all_matches(self):
-        if self.timing:
-            start_time = time.time()
-
         n = len(self.cameras)
         for i, camera_i in enumerate(self.cameras):
             for j in range(i + 1, n):
                 camera_j = self.cameras[j]
                 self.find_matches(camera_i, camera_j)
-
-        if self.timing:
-            self.log_execution_time(
-                inspect.currentframe().f_code.co_name, time.time() - start_time
-            )
 
     def remove_bad_cameras(self):
         logging.info("Removing outlier matches")
@@ -1617,35 +1319,6 @@ class Slam2DIncremental(Visus.Slam):
         self.removeDisconnectedCameras()
         logging.info("Removing cameras with too much skew")
         self.removeCamerasWithTooMuchSkew()
-
-    def log_execution_time(self, func_name, seconds):
-        if func_name not in self.execution_times:
-            self.execution_times[func_name] = []
-        self.execution_times[func_name].append(seconds)
-
-    # Save all execution time data as a csv
-    def write_times_to_csv(self):
-        if not self.execution_times.keys():
-            return
-
-        path = os.path.join(self.output_dir, "execution_timing.csv")
-        if os.path.exists(path):
-            os.remove(path)
-        with open(path, "a") as file:
-            file.write(
-                f"function_name,total ({len(self.provider.images)} img),avg,min,max,\n"
-            )
-            for key in self.execution_times.keys():
-                times = self.execution_times[key]
-                file.write(f"{key},")
-                total = np.sum(times)
-                file.write(
-                    f"{total},{total / len(times)},{np.min(times)},{np.max(times)},"
-                )
-                for t in times:
-                    file.write(f"{t},")
-                file.write("\n")
-            file.close()
 
     def blend(self, count):
         f = open(f"{self.output_dir}/visus{count}.midx", "r")
@@ -1686,7 +1359,14 @@ class Slam2DIncremental(Visus.Slam):
 
             maskarray = 255 * np.ones(img.shape, dtype="uint8")
 
-            pts1 = np.float32([list(newpoints[0]), list(newpoints[1]), list(newpoints[2]), list(newpoints[3])])
+            pts1 = np.float32(
+                [
+                    list(newpoints[0]),
+                    list(newpoints[1]),
+                    list(newpoints[2]),
+                    list(newpoints[3]),
+                ]
+            )
             pts2 = np.float32([[0, 0], [width, 0], [width, height], [0, height]])
             matrix = cv2.getPerspectiveTransform(pts1, pts2)
             warp = cv2.warpPerspective(img, matrix, (width, height))
@@ -1698,7 +1378,7 @@ class Slam2DIncremental(Visus.Slam):
         for c in corners:
             c[1] = maxy - c[1]
 
-        seam_finder = cv2.detail_DpSeamFinder('COLOR')
+        seam_finder = cv2.detail_DpSeamFinder("COLOR")
         masks_seams = seam_finder.find(warped, corners, masks)
 
         masks_seams = list(masks_seams)
@@ -1713,10 +1393,12 @@ class Slam2DIncremental(Visus.Slam):
             blender = cv2.detail.Blender_createDefault(cv2.detail.Blender_NO)
         elif blend_type == "multiband":
             blender = cv2.detail_MultiBandBlender()
-            blender.setNumBands((np.log(blend_width) / np.log(2.) - 1.).astype(np.int32))
+            blender.setNumBands(
+                (np.log(blend_width) / np.log(2.0) - 1.0).astype(np.int32)
+            )
         elif blend_type == "feather":
             blender = cv2.detail_FeatherBlender()
-            blender.setSharpness(1. / blend_width)
+            blender.setSharpness(1.0 / blend_width)
         blender.prepare(dst_sz)
 
         for i in range(len(masks)):
@@ -1727,5 +1409,11 @@ class Slam2DIncremental(Visus.Slam):
         result = None
         result_mask = None
         result, result_mask = blender.blend(result, result_mask)
-        dst = cv2.normalize(src=result, dst=None, alpha=255., norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
+        dst = cv2.normalize(
+            src=result,
+            dst=None,
+            alpha=255.0,
+            norm_type=cv2.NORM_MINMAX,
+            dtype=cv2.CV_8U,
+        )
         cv2.imwrite(f"{self.output_dir}/result.jpg", dst)
