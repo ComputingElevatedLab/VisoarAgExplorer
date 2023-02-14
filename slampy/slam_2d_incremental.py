@@ -1,4 +1,3 @@
-import inspect
 import logging
 import math
 import os.path
@@ -83,6 +82,8 @@ class Slam2DIncremental(Visus.Slam):
         self.physic_box_string = ""
         self.physic_box_values = []
         self.resize_scale = resize_scale
+        self.scale_values = None
+        self.translate_values = None
 
         # Initialize the image provider
         self.alt_threshold = alt_threshold
@@ -195,35 +196,12 @@ class Slam2DIncremental(Visus.Slam):
 
     def load_image_metadata(self, image):
         self.load_metadata(image)
-        self.load_gps_from_metadata(image)
+        load_gps_from_metadata(image)
         self.load_yaw_from_metadata(image)
 
     def load_metadata(self, image):
         filename = image.filenames[0]
         image.metadata = self.reader.readMetadata(filename)
-
-    def load_gps_from_metadata(self, image):
-        logging.info("Loading GPS latitude, longitude, and altitude from metadata")
-
-        lat = img_utils.FindMetadata(image.metadata, ["GPSLatitude", "Latitude", "lat"])
-        if not lat:
-            raise Exception("Error: missing latitude from metadata")
-
-        lon = img_utils.FindMetadata(
-            image.metadata, ["GPSLongitude", "Longitude", "lon"]
-        )
-        if not lon:
-            raise Exception("Error: missing longitude from metadata")
-
-        alt = img_utils.FindMetadata(image.metadata, ["GPSAltitude", "Altitude", "alt"])
-        if not alt:
-            raise Exception("Error: missing altitude from metadata")
-
-        image.lat = float(image.metadata[lat])
-        image.lon = float(image.metadata[lon])
-        image.alt = float(image.metadata[alt])
-
-        logging.info(f"lat = {image.lat}, lon = {image.lon}, alt = {image.alt}")
 
     def load_yaw_from_metadata(self, image):
         logging.info(f"Loading yaw from metadata")
@@ -249,15 +227,15 @@ class Slam2DIncremental(Visus.Slam):
     def interpolate_gps(self):
         n = len(self.provider.images)
         for i, image in enumerate(self.provider.images):
-            if not self.wrong_gps(image):
+            if not wrong_gps(image):
                 continue
 
             a = i - 1
-            while a >= 0 and self.wrong_gps(self.provider.images[a]):
+            while a >= 0 and wrong_gps(self.provider.images[a]):
                 a -= 1
 
             b = i + 1
-            while b < n and self.wrong_gps(self.provider.images[b]):
+            while b < n and wrong_gps(self.provider.images[b]):
                 b += 1
 
             if 0 <= a < b < n:
@@ -279,9 +257,6 @@ class Slam2DIncremental(Visus.Slam):
                     f"Error: could not interpolate GPS for {image.filenames[0]}"
                 )
 
-    def wrong_gps(self, image):
-        return image.lat == 0.0 or image.lon == 0.0 or image.alt == 0.0
-
     def initialize_slam(self, image):
         if not image:
             return
@@ -295,9 +270,7 @@ class Slam2DIncremental(Visus.Slam):
 
         generate_start = time.time()
         self.initial_multi_image = self.generate_multi_image(image)
-        self.initial_interleaved_image = self.interleave_channels(
-            self.initial_multi_image
-        )
+        self.initial_interleaved_image = interleave_channels(self.initial_multi_image)
         self.initial_generate_time = time.time() - generate_start
 
         image_as_array = Visus.Array.fromNumPy(
@@ -329,11 +302,6 @@ class Slam2DIncremental(Visus.Slam):
 
     def generate_multi_image(self, image):
         return self.provider.generateMultiImage(image)
-
-    def interleave_channels(self, multi_image):
-        if len(multi_image) == 1:
-            return multi_image[0]
-        return np.dstack(multi_image)
 
     def guess_plane(self, image):
         if self.multi_band:
@@ -496,10 +464,8 @@ class Slam2DIncremental(Visus.Slam):
         for i, cell in enumerate(cells):
             center = (np.float32(centers[i][0]), np.float32(centers[i][1]))
             camera2 = find_camera[center]
-            center = self.quad_to_screen(center, box)
-            cell = np.array(
-                [self.quad_to_screen(it, box) for it in cell], dtype=np.int32
-            )
+            center = quad_to_screen(center, box)
+            cell = np.array([quad_to_screen(it, box) for it in cell], dtype=np.int32)
             cv2.fillConvexPoly(
                 out,
                 cell,
@@ -575,9 +541,6 @@ class Slam2DIncremental(Visus.Slam):
             indices = self.get_intersecting_indices(index)
             logging.info(f"Number of images being bundle adjusted: {len(indices)}")
             self.find_matches_among_indices(indices)
-
-
-
 
     def get_intersecting_indices(self, at):
         camera = self.cameras[at]
@@ -737,10 +700,14 @@ class Slam2DIncremental(Visus.Slam):
             logic_centers.append((logic_x, logic_y))
 
         # This is the midx, dump some information about the slam
-        self.logic_box_string = f"{int(logic_box.p1[0])} {int(logic_box.p2[0])} {int(logic_box.p1[1])} {int(logic_box.p2[1])}"
+        self.logic_box_string = (
+            f"{int(logic_box.p1[0])} {int(logic_box.p2[0])} "
+            f"{int(logic_box.p1[1])} {int(logic_box.p2[1])}"
+        )
         self.physic_box_string = f"{physic_box.p1[0]} {physic_box.p2[0]} {physic_box.p1[1]} {physic_box.p2[1]}"
         lines = [
-            f'<dataset typename="IdxMultipleDataset" logic_box="{self.logic_box_string}" physic_box="{self.physic_box_string}">',
+            f'<dataset typename="IdxMultipleDataset" '
+            f'logic_box="{self.logic_box_string}" physic_box="{self.physic_box_string}">',
             '\t<slam width="%s" height="%s" dtype="%s" calibration="%s %s %s"/>'
             % (
                 Visus.cstring(self.width),
@@ -834,7 +801,8 @@ class Slam2DIncremental(Visus.Slam):
             p = camera.getWorldCenter()
             lat, lon = GPSUtils.localCartesianToGps(p.x, p.y, self.lat0, self.lon0)
             lines.append(
-                '\t\t\t\t<dataset url="%s" color="%s" quad="%s" filenames="%s" q="%s" t="%s" lat="%s" lon="%s" alt="%s" />'
+                '\t\t\t\t<dataset url="%s" color="%s" quad="%s" filenames="%s" q="%s" t="%s" lat="%s" lon="%s" '
+                'alt="%s" />'
                 % (
                     f"./{camera.idx_filename[2:]}",
                     camera.color.toString(),
@@ -855,7 +823,8 @@ class Slam2DIncremental(Visus.Slam):
         lines.append('\t\t<version value="6" />')
         lines.append('\t\t<bitmask value="V00101010101010101010101" />')
         lines.append(
-            f'\t\t<box value="{int(logic_box.p1[0])} {int(logic_box.p2[0])} {int(logic_box.p1[1])} {int(logic_box.p2[1])}" />'
+            f'\t\t<box value="{int(logic_box.p1[0])} {int(logic_box.p2[0])} '
+            f'{int(logic_box.p1[1])} {int(logic_box.p2[1])}" />'
         )
         lines.append('\t\t<bitsperblock value="16" />')
         lines.append('\t\t<blocksperfile value="21" />')
@@ -868,7 +837,8 @@ class Slam2DIncremental(Visus.Slam):
         )
         for i in range(self.band_range):
             lines.append(
-                f'\t\t<field name="band{i}" description="" index="{i}" default_compression="" default_layout="" default_value="0" filter="" dtype="float32" />'
+                f'\t\t<field name="band{i}" description="" index="{i}" default_compression="" default_layout="" '
+                f'default_value="0" filter="" dtype="float32" />'
             )
         lines.append('\t\t<timestep when="0" />')
         lines.append("\t</idxfile>")
@@ -940,29 +910,21 @@ class Slam2DIncremental(Visus.Slam):
                 Visus.cstring(self.calibration.cy),
             ),
             "",
-        ]
-
-        lines.append("<field name='voronoi'><code>output=voronoi()</code></field>")
-
-        lines.append("")
-
-        # how to go from logic_box (i.e. pixel) -> physic box ([0,1]*[0,1])
-        lines.append(
+            "<field name='voronoi'><code>output=voronoi()</code></field>",
+            "",
             "<translate x='%s' y='%s'>"
-            % (Visus.cstring10(physic_box.p1[0]), Visus.cstring10(physic_box.p1[1]))
-        )
-        lines.append(
+            % (Visus.cstring10(physic_box.p1[0]), Visus.cstring10(physic_box.p1[1])),
             "<scale     x='%s' y='%s'>"
             % (
                 Visus.cstring10((physic_box.size()[0]) / logic_box.size()[0]),
                 Visus.cstring10((physic_box.size()[1]) / logic_box.size()[1]),
-            )
-        )
-        lines.append(
+            ),
             "<translate x='%s' y='%s'>"
-            % (Visus.cstring10(-logic_box.p1[0]), Visus.cstring10(-logic_box.p1[1]))
-        )
-        lines.append("")
+            % (Visus.cstring10(-logic_box.p1[0]), Visus.cstring10(-logic_box.p1[1])),
+            "",
+        ]
+
+        # how to go from logic_box (i.e. pixel) -> physic box ([0,1]*[0,1])
 
         if self.enable_svg:
             W = int(1048)
@@ -1048,13 +1010,14 @@ class Slam2DIncremental(Visus.Slam):
 
     def create_google_midx(self, suffix=""):
         logging.info("Creating google.midx")
-        lines = ["<dataset name='slam' typename='IdxMultipleDataset'>"]
-        lines.append("<field name='voronoi'><code>output=voronoi()</code></field>")
-        lines.append(
-            "\t<dataset typename='GoogleMapsDataset' tiles='http://mt1.google.com/vt/lyrs=s' physic_box='0.0 1.0 0.0 1.0' />"
-        )
-        lines.append(f"\t<dataset name='visus'   url='./visus{suffix}.midx' />")
-        lines.append("</dataset>")
+        lines = [
+            "<dataset name='slam' typename='IdxMultipleDataset'>",
+            "<field name='voronoi'><code>output=voronoi()</code></field>",
+            "\t<dataset typename='GoogleMapsDataset' tiles='https://mt1.google.com/vt/lyrs=s' physic_box='0.0 1.0 "
+            "0.0 1.0' />",
+            f"\t<dataset name='visus'   url='./visus{suffix}.midx' />",
+            "</dataset>",
+        ]
         Visus.SaveTextDocument(f"{self.output_dir}/google.midx", "\n".join(lines))
         logging.info("Created google.midx")
 
@@ -1065,7 +1028,12 @@ class Slam2DIncremental(Visus.Slam):
             with open("templates/google-xml-header-1.txt") as header:
                 xml.write(header.read())
                 xml.write(
-                    f'\t\t\t<GLOrthoCamera pos="0.000000 0.000000 0.000000" center="0.000000 0.000000 -1.000000" vup="0.000000 1.000000 0.000000" rotation="0.000000" ortho_params="{self.translate_values[0] - 0.000005} {self.translate_values[0] + 0.000014} {self.translate_values[1] - 0.000005} {self.translate_values[1] + 0.000014} 1.000000 -1.000000" default_scale="1.300000" disable_rotation="False" max_zoom="0.000000" min_zoom="0.000000" default_smooth="500" />\n'
+                    f'\t\t\t<GLOrthoCamera pos="0.000000 0.000000 0.000000" center="0.000000 0.000000 -1.000000" '
+                    f'vup="0.000000 1.000000 0.000000" rotation="0.000000" ortho_params="'
+                    f"{self.translate_values[0] - 0.000005} {self.translate_values[0] + 0.000014} "
+                    f'{self.translate_values[1] - 0.000005} {self.translate_values[1] + 0.000014} 1.000000 -1.000000" '
+                    f'default_scale="1.300000" disable_rotation="False" max_zoom="0.000000" min_zoom="0.000000" '
+                    f'default_smooth="500" />\n'
                 )
                 xml.write("\t\t</GLCameraNode>\n")
                 xml.write("\t</AddNode>\n")
@@ -1083,13 +1051,15 @@ class Slam2DIncremental(Visus.Slam):
                 xml.write(header.read())
 
             xml.write(
-                f'\t\t<DatasetNode uuid="dataset1" name="file://{path}/visus{suffix}.midx" visible="True" show_bounds="True">\n'
+                f'\t\t<DatasetNode uuid="dataset1" name="file://{path}/visus{suffix}.midx" visible="True" '
+                f'show_bounds="True">\n'
             )
 
             with open(f"{path}/visus{suffix}.midx") as midx:
                 midx.readline()
                 xml.write(
-                    f'\t\t\t<dataset url="file://{path}/visus{suffix}.midx" typename="IdxMultipleDataset" logic_box="{self.logic_box_string}" physic_box="{self.physic_box_string}">\n'
+                    f'\t\t\t<dataset url="file://{path}/visus{suffix}.midx" typename="IdxMultipleDataset" '
+                    f'logic_box="{self.logic_box_string}" physic_box="{self.physic_box_string}">\n'
                 )
                 for line in midx:
                     xml.write(f"\t\t\t{line}")
@@ -1099,7 +1069,8 @@ class Slam2DIncremental(Visus.Slam):
                 xml.write(footer.read())
 
             xml.write(
-                f'\t\t\t<node_bounds T="{self.scale_values[0]} 0 {self.translate_values[0]} 0 {self.scale_values[1]} {self.translate_values[1]} 0 0 1" box="{self.logic_box_string}" />\n'
+                f'\t\t\t<node_bounds T="{self.scale_values[0]} 0 {self.translate_values[0]} 0 {self.scale_values[1]} '
+                f'{self.translate_values[1]} 0 0 1" box="{self.logic_box_string}" />\n'
             )
 
             with open("templates/google-xml-footer-2.txt") as footer:
@@ -1180,25 +1151,16 @@ class Slam2DIncremental(Visus.Slam):
                 255,
             )
             points = np.array(
-                [self.quad_to_screen(it, box) for it in camera.quad.points],
+                [quad_to_screen(it, box) for it in camera.quad.points],
                 dtype=np.int32,
             )
             cv2.polylines(out, [points], True, color, 3)
-            org = self.quad_to_screen(camera.quad.points[0], box)
+            org = quad_to_screen(camera.quad.points[0], box)
             cv2.putText(
                 out, str(camera.id), org, cv2.FONT_HERSHEY_COMPLEX_SMALL, 1.0, color
             )
 
         img_utils.SaveImage(f"{self.output_dir}/~solution.png", out)
-
-    def quad_to_screen(self, p, box):
-        w = float(box.size()[0])
-        h = float(box.size()[1])
-        W = int(4096)
-        H = int(h * (W / w))
-        return int(0 + (p[0] - box.p1[0]) * (W / w)), int(
-            H - (p[1] - box.p1[1]) * (H / h)
-        )
 
     def interleave_and_write_image(self, image, camera):
         if self.initial_multi_image:
@@ -1209,7 +1171,7 @@ class Slam2DIncremental(Visus.Slam):
         else:
             generate_start = time.time()
             multi_image = self.generate_multi_image(image)
-            interleaved_image = self.interleave_channels(multi_image)
+            interleaved_image = interleave_channels(multi_image)
             generate_time = time.time() - generate_start
             logging.info(f"Interleaved image generated in: {generate_time} s")
 
@@ -1420,3 +1382,45 @@ class Slam2DIncremental(Visus.Slam):
             dtype=cv2.CV_8U,
         )
         cv2.imwrite(f"{self.output_dir}/result.jpg", dst)
+
+
+def load_gps_from_metadata(image):
+    logging.info("Loading GPS latitude, longitude, and altitude from metadata")
+
+    lat = img_utils.FindMetadata(image.metadata, ["GPSLatitude", "Latitude", "lat"])
+    if not lat:
+        raise Exception("Error: missing latitude from metadata")
+
+    lon = img_utils.FindMetadata(image.metadata, ["GPSLongitude", "Longitude", "lon"])
+    if not lon:
+        raise Exception("Error: missing longitude from metadata")
+
+    alt = img_utils.FindMetadata(image.metadata, ["GPSAltitude", "Altitude", "alt"])
+    if not alt:
+        raise Exception("Error: missing altitude from metadata")
+
+    image.lat = float(image.metadata[lat])
+    image.lon = float(image.metadata[lon])
+    image.alt = float(image.metadata[alt])
+
+    logging.info(f"lat = {image.lat}, lon = {image.lon}, alt = {image.alt}")
+
+
+def wrong_gps(image):
+    return image.lat == 0.0 or image.lon == 0.0 or image.alt == 0.0
+
+
+def interleave_channels(multi_image):
+    if len(multi_image) == 1:
+        return multi_image[0]
+    return np.dstack(multi_image)
+
+
+def quad_to_screen(p, box):
+    w0 = float(box.size()[0])
+    h0 = float(box.size()[1])
+    w1 = int(4096)
+    h1 = int(h0 * (w1 / w0))
+    return int(0 + (p[0] - box.p1[0]) * (w1 / w0)), int(
+        h1 - (p[1] - box.p1[1]) * (h1 / h0)
+    )
