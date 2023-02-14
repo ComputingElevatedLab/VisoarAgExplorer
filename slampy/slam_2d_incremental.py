@@ -207,7 +207,8 @@ class Slam2DIncremental(Visus.Slam):
         logging.info(f"Loading yaw from metadata")
 
         yaw = img_utils.FindMetadata(
-            image.metadata, ["Yaw", "GimbalYaw", "GimbalYawDegree", "yaw", "yaw(gps)"]
+            image.metadata,
+            ["XMP:Yaw", "Yaw", "GimbalYaw", "GimbalYawDegree", "yaw", "yaw(gps)"],
         )
 
         if yaw in image.metadata:
@@ -296,7 +297,8 @@ class Slam2DIncremental(Visus.Slam):
             )
 
         # Needed so that RGB bands will be aligned later
-        self.provider.findMultiAlignment(self.initial_multi_image)
+        if self.multi_band:
+            self.provider.findMultiAlignment(self.initial_multi_image)
 
         self.calibration = self.provider.calibration
 
@@ -1391,15 +1393,21 @@ class Slam2DIncremental(Visus.Slam):
 def load_gps_from_metadata(image):
     logging.info("Loading GPS latitude, longitude, and altitude from metadata")
 
-    lat = img_utils.FindMetadata(image.metadata, ["GPSLatitude", "Latitude", "lat"])
+    lat = img_utils.FindMetadata(
+        image.metadata, ["EXIF:GPSLatitude", "GPSLatitude", "Latitude", "lat"]
+    )
     if not lat:
         raise Exception("Error: missing latitude from metadata")
 
-    lon = img_utils.FindMetadata(image.metadata, ["GPSLongitude", "Longitude", "lon"])
+    lon = img_utils.FindMetadata(
+        image.metadata, ["EXIF:GPSLongitude", "GPSLongitude", "Longitude", "lon"]
+    )
     if not lon:
         raise Exception("Error: missing longitude from metadata")
 
-    alt = img_utils.FindMetadata(image.metadata, ["GPSAltitude", "Altitude", "alt"])
+    alt = img_utils.FindMetadata(
+        image.metadata, ["EXIF:GPSAltitude", "GPSAltitude", "Altitude", "alt"]
+    )
     if not alt:
         raise Exception("Error: missing altitude from metadata")
 
