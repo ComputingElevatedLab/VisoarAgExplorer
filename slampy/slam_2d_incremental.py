@@ -503,7 +503,7 @@ class Slam2DIncremental(Visus.Slam):
             # rtree select closest N
             # Total elapsed time: 634.3631505966187
             logging.info(f"Getting intersecting indices on index {index}")
-            indices = self.get_nearest_n_indices(index, 30)
+            indices = self.get_nearest_n_indices(index, 50)
             logging.info(f"Number of images being bundle adjusted: {len(indices)}")
             self.find_matches_among_indices(indices)
         elif method == 1:
@@ -513,9 +513,10 @@ class Slam2DIncremental(Visus.Slam):
             for camera_j in self.cameras:
                 if camera_i == camera_j:
                     continue
-                self.find_matches(camera_i, camera_j)
+                if camera_i.getEdge(camera_j) is not None:
+                    self.find_matches(camera_i, camera_j)
             logging.info(f"Getting intersecting indices on index {index}")
-            self.get_nearest_n_indices(index, 30)
+            self.get_nearest_n_indices(index, 50)
         elif method == 2:
             # Match all to all but set only some as bFixed
             # Total elapsed time: 720.8694500923157 s
@@ -523,7 +524,8 @@ class Slam2DIncremental(Visus.Slam):
             for camera_j in self.cameras:
                 if camera_i == camera_j:
                     continue
-                self.find_matches(camera_i, camera_j)
+                if camera_i.getEdge(camera_j) is not None:
+                    self.find_matches(camera_i, camera_j)
             logging.info(f"Getting intersecting indices on index {index}")
             self.get_intersecting_indices(index)
         elif method == 3:
@@ -533,7 +535,8 @@ class Slam2DIncremental(Visus.Slam):
             for camera_j in self.cameras:
                 if camera_i == camera_j:
                     continue
-                self.find_matches(camera_i, camera_j)
+                if camera_i.getEdge(camera_j) is not None:
+                    self.find_matches(camera_i, camera_j)
         elif method == 4:
             # rtree select intersecting
             # Total elapsed time: 2349.37468457222
@@ -588,7 +591,8 @@ class Slam2DIncremental(Visus.Slam):
             for k in range(i + 1, len(indices)):
                 j = indices[k]
                 camera_j = self.cameras[j]
-                self.find_matches(camera_i, camera_j)
+                if camera_i.getEdge(camera_j) is not None:
+                    self.find_matches(camera_i, camera_j)
 
     def find_nearest_n_matches(self, camera, n):
         center = self.world_centers[camera.id]
@@ -598,7 +602,8 @@ class Slam2DIncremental(Visus.Slam):
             if v == camera.id:
                 continue
             other_camera = self.cameras[v]
-            self.find_matches(camera, other_camera)
+            if camera.getEdge(other_camera) is not None:
+                self.find_matches(camera, other_camera)
 
     def get_local_ba_indices(self, at, previous):
         if previous:
@@ -1234,8 +1239,7 @@ class Slam2DIncremental(Visus.Slam):
             return 0
 
         # We have already set matches for these two cameras
-        edge = camera2.getEdge(camera1)
-        if edge is None or edge.isGood():
+        if camera2.getEdge(camera1).isGood():
             return 0
 
         matches, h, err = FindMatches(
