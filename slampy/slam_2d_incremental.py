@@ -577,18 +577,19 @@ class Slam2DIncremental(Visus.Slam):
             logging.info(f"Number of images being bundle adjusted: {len(indices)}")
             self.find_matches_among_indices(indices)
 
-
-
-
     def get_intersecting_indices(self, start_indices):
-        indices = []
+        indices = set()
         for index in start_indices:
             camera = self.cameras[index]
             box = camera.quad.getBoundingBox()
             camera.bFixed = False
-            indices.extend(self.idx_boxes.intersection([box.p1[0], box.p1[1], box.p2[0], box.p2[1]]))
+            indices.update(
+                self.idx_boxes.intersection(
+                    list([box.p1[0], box.p1[1], box.p2[0], box.p2[1]])
+                )
+            )
 
-        indices = list(set(indices))
+        indices = list(indices)
 
         for i, other_camera in enumerate(self.cameras):
             if i in indices:
@@ -600,14 +601,14 @@ class Slam2DIncremental(Visus.Slam):
         return indices
 
     def get_nearest_n_indices(self, start_indices, n):
-        indices = []
+        indices = set()
         for index in start_indices:
             camera = self.cameras[index]
             center = self.world_centers[camera.id]
             camera.bFixed = False
-            indices.extend(list(self.idx_centers.nearest((center[0], center[1]), n)))
+            indices.update(list(self.idx_centers.nearest((center[0], center[1]), n)))
 
-        indices = list(set(indices))
+        indices = list(indices)
 
         for i, other_camera in enumerate(self.cameras):
             if i in indices:
