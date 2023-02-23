@@ -1311,7 +1311,7 @@ class Slam2DIncremental(Visus.Slam):
             camera2.id,
             [(k.x, k.y) for k in camera2.keypoints],
             Visus.Array.toNumPy(camera2.descriptors),
-            self.max_reprojection_error * self.width,
+            self.max_reprojection_error,
             self.ratio_check,
         )
 
@@ -1343,7 +1343,7 @@ class Slam2DIncremental(Visus.Slam):
 
     def remove_bad_cameras(self):
         logging.info("Removing outlier matches")
-        self.removeOutlierMatches(self.max_reprojection_error * self.width)
+        self.removeOutlierMatches(self.max_reprojection_error)
         logging.info("Removing disconnected cameras")
         self.removeDisconnectedCameras()
         logging.info("Removing cameras with too much skew")
