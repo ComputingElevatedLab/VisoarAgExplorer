@@ -322,10 +322,17 @@ class Slam2DIncremental(Visus.Slam):
                 self.initial_multi_image
             )
 
+        self.calibration = self.provider.calibration
+
         # Needed so that RGB bands will be aligned later
         self.provider.findMultiAlignment(self.initial_multi_image)
 
-        self.calibration = self.provider.calibration
+        generate_start = time.time()
+        self.initial_multi_image = self.generate_multi_image(image)
+        self.initial_interleaved_image = self.interleave_channels(
+            self.initial_multi_image
+        )
+        self.initial_generate_time = time.time() - generate_start
 
     def generate_multi_image(self, image):
         return self.provider.generateMultiImage(image)
@@ -383,7 +390,7 @@ class Slam2DIncremental(Visus.Slam):
         camera.idx_filename = f"./idx/{camera.id:04d}.idx"
         field = Visus.Field("myfield", self.dtype)
         field.default_layout = "row_major"
-        Visus.CreateIdx(
+        return Visus.CreateIdx(
             url=os.path.join(self.output_dir, camera.idx_filename),
             dim=2,
             filename_template=f"./{camera.id:04d}.bin",
@@ -533,12 +540,12 @@ class Slam2DIncremental(Visus.Slam):
         self.idx_boxes.insert(camera.id, [box.p1[0], box.p1[1], box.p2[0], box.p2[1]])
 
     def select_and_match_indices(self, start_indices, method=0):
-        print("here")
         if method == 0:
             # rtree select closest N
             # Total elapsed time: 634.3631505966187
             logging.info(f"Getting intersecting indices on {start_indices}")
             indices = self.get_nearest_n_indices(start_indices, 9)
+            # indices = self.get_bounding_box_indices(start_indices)
             logging.info(f"Number of images being bundle adjusted: {len(indices)}")
             self.find_matches_among_indices(indices)
         elif method == 1:
@@ -599,6 +606,26 @@ class Slam2DIncremental(Visus.Slam):
                 other_camera.bFixed = True
 
         return indices
+
+    def get_bounding_box_indices(self, start_indices):
+        box = Visus.BoxNd.invalid()
+        for index in start_indices:
+            box = box.getUnion(self.cameras[index].quad.getBoundingBox())
+
+        indices = set(start_indices)
+        for camera in self.cameras:
+            if camera.id in indices:
+                camera.color = camera.color
+                camera.bFixed = False
+                continue
+            bound = camera.quad.getBoundingBox()
+            if box.intersect(bound):
+                indices.add(camera.id)
+                camera.bFixed = False
+            else:
+                camera.bFixed = True
+
+        return list(indices)
 
     def get_nearest_n_indices(self, start_indices, n):
         indices = set()
@@ -1200,7 +1227,7 @@ class Slam2DIncremental(Visus.Slam):
             H - (p[1] - box.p1[1]) * (H / h)
         )
 
-    def interleave_and_write_image(self, image, camera):
+    def interleave_and_write_image(self, db, image, camera):
         if self.initial_multi_image:
             interleaved_image = self.initial_interleaved_image
             self.initial_multi_image = None
@@ -1213,10 +1240,9 @@ class Slam2DIncremental(Visus.Slam):
             generate_time = time.time() - generate_start
             logging.info(f"Interleaved image generated in: {generate_time} s")
 
-        dataset_start = time.time()
-        data = Visus.LoadDataset(f"{self.output_dir}/{camera.idx_filename}")
-        data.write(interleaved_image)
-        write_time = time.time() - dataset_start
+        write_start = time.time()
+        db.write(interleaved_image)
+        write_time = time.time() - write_start
         logging.info(f"Wrote interleaved image data in: {write_time} s")
 
         return interleaved_image, generate_time, write_time

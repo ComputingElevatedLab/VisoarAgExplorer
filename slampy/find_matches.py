@@ -1,13 +1,13 @@
-
 from OpenVisus import *
 from slampy.image_utils import *
 
 import cv2
 import numpy
+from itertools import product
+
 
 # /////////////////////////////////////////////////////////////////////////////////////
 def DebugMatches(filename, width, height, img1, points1, H1, img2, points2, H2, TargetWidth=1024):
-
     def transformPoints(points, H):
         return cv2.perspectiveTransform(numpy.float32([points]), H)[0]
 
@@ -25,10 +25,10 @@ def DebugMatches(filename, width, height, img1, points1, H1, img2, points2, H2, 
     bounds = [*bounds1, *bounds2]
 
     border = 10
-    x1 = int(min([x for x, y in bounds]))-border
-    x2 = int(max([x for x, y in bounds]))+border
-    y1 = int(min([y for x, y in bounds]))-border
-    y2 = int(max([y for x, y in bounds]))+border
+    x1 = int(min([x for x, y in bounds])) - border
+    x2 = int(max([x for x, y in bounds])) + border
+    y1 = int(min([y for x, y in bounds])) - border
+    y2 = int(max([y for x, y in bounds])) + border
 
     W = x2 - x1
     H = y2 - y1
@@ -60,7 +60,7 @@ def DebugMatches(filename, width, height, img1, points1, H1, img2, points2, H2, 
     for point1, point2 in zip(points1, points2):
         cv2.drawMarker(img, tuple(point1), red, cv2.MARKER_CROSS, 10, 2)
         cv2.drawMarker(img, tuple(point2), green, cv2.MARKER_CROSS, 10, 2)
-        cv2.line(img, tuple(point1), tuple(point2), red,   3)
+        cv2.line(img, tuple(point1), tuple(point2), red, 3)
         cv2.line(img, tuple(point1), tuple(point2), green, 3)
 
     borders1 = transformPoints(
@@ -68,28 +68,33 @@ def DebugMatches(filename, width, height, img1, points1, H1, img2, points2, H2, 
     borders2 = transformPoints(
         [(0, 0), (width, 0), (width, height), (0, height)], H2)
     for I in range(4):
-        cv2.line(img, tuple(borders1[I]), tuple(borders1[(I+1) % 4]), red,   2)
-        cv2.line(img, tuple(borders2[I]), tuple(borders2[(I+1) % 4]), green, 2)
+        cv2.line(img, tuple(borders1[I]), tuple(borders1[(I + 1) % 4]), red, 2)
+        cv2.line(img, tuple(borders2[I]), tuple(borders2[(I + 1) % 4]), green, 2)
 
     img = cv2.flip(img, 0)
     SaveImage(filename, img)
+
 
 # /////////////////////////////////////////////////////////////////////////////////////////
 
 
 def RatioCheck(matches, ratio_check):
-    return [match[0] for match in matches if len(match) > 1 and (match[0].distance / float(match[1].distance)) < ratio_check]
+    return [match[0] for match in matches if
+            len(match) > 1 and (match[0].distance / float(match[1].distance)) < ratio_check]
 
 
 # /////////////////////////////////////////////////////////////////////////////////////////
 def SymmetricCheck(matches1, matches2):
-    ret = []
-    for match1 in matches1:
-        for match2 in matches2:
-            if (match1.queryIdx == match2.trainIdx and match1.trainIdx == match2.queryIdx):
-                ret.append(match1)
-                break
-    return ret
+    return [m1 for m1, m2 in product(matches1, matches2) if m1.queryIdx == m2.trainIdx and m1.trainIdx == m2.queryIdx]
+
+    # ret = []
+    # for match1 in matches1:
+    #     for match2 in matches2:
+    #         if (match1.queryIdx == match2.trainIdx and match1.trainIdx == match2.queryIdx):
+    #             ret.append(match1)
+    #             break
+    # return ret
+
 
 # //////////////////////////////////////////////////////////////////////////////////////////
 
@@ -98,30 +103,28 @@ def FindMatches(width, height,
                 id1, points1, descriptors1,
                 id2, points2, descriptors2,
                 max_reproj_error, ratio_check):
-
     t1 = Time.now()
 
-    out = ""
-    out += "%d/%d" % (id1, id2)
+    # out = f"{id1}/{id2}"
 
     # cv2.FlannBasedMatcher matcher don't have advantages using flann
     matcher = cv2.BFMatcher(cv2.NORM_HAMMING)
 
     knn1 = matcher.knnMatch(descriptors1, descriptors2, 2)
     knn2 = matcher.knnMatch(descriptors2, descriptors1, 2)
-    out += " knnMatch(%d,%d)" % (len(knn1), len(knn2))
+    # out += f" knnMatch({len(knn1)}, {len(knn2)})"
 
     matches1 = RatioCheck(knn1, ratio_check)
     matches2 = RatioCheck(knn2, ratio_check)
-    out += " matches1(%d) matches2(%d)" % (len(matches1), len(matches2))
+    # out += f" matches1({len(matches1)}) matches2({len(matches2)})"
 
     matches = SymmetricCheck(matches1, matches2)
-    out += " SymmetricCheck(%d)" % (len(matches),)
+    # out += f" SymmetricCheck(len(matches))"
 
     if not matches:
-        out+"!matches"
-        print(out)
-        return ([], None, "!matches")
+        # out += "!matches"
+        # print(out)
+        return [], None, "!matches"
 
     points1 = [points1[match.queryIdx] for match in matches]
     points2 = [points2[match.trainIdx] for match in matches]
@@ -138,33 +141,32 @@ def FindMatches(width, height,
         print("error cv2 findHomography failed")
 
     if H21 is None:
-        out += " !homo"
-        print(out)
-        return ([], None, "!homo")
+        # out += " !homo"
+        # print(out)
+        return [], None, "!homo"
 
     # keep only inliers
     inliers = inliers.ravel().tolist()
-    matches = [matches[I] for I in range(len(matches)) if inliers[I]]
-    out+"inliers(%d)" % (len(matches),)
+    matches = [match for i, match in enumerate(matches) if inliers[i]]
+    # out += f"inliers({len(matches)})"
 
     quad21 = Quad(Matrix(H21.ravel().tolist()), Quad(width, height))
-    quad22 = Quad(width, height)
 
     if not quad21.isConvex():
-        out += " notConvex"
-        print(out)
-        return (matches, H21, "notConvex")
+        # out += " notConvex"
+        # print(out)
+        return matches, H21, "notConvex"
 
-    if quad21.wrongAngles():
-        out += " wrongAngles"
-        print(out)
-        return (matches, H21, "wrongAngles")
+    elif quad21.wrongAngles():
+        # out += " wrongAngles"
+        # print(out)
+        return matches, H21, "wrongAngles"
 
-    if (quad21.wrongScale(width, height)):
-        out += " wrongScale"
-        print(out)
-        return (matches, H21, "wrongScale")
+    elif quad21.wrongScale(width, height):
+        # out += " wrongScale"
+        # print(out)
+        return matches, H21, "wrongScale"
 
-    out += " nmatches(%d) in %d msec" % (len(matches), t1.elapsedMsec())
-    print(out)
-    return (matches, H21, "")
+    # out += f"nmatches({len(matches)}) in {t1.elapsedMsec()} msec"
+    # print(out)
+    return matches, H21, ""

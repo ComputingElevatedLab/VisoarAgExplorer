@@ -702,8 +702,9 @@ class ImageProvider:
 		self.findMultiAlignment(multi) 
 
 	# undistortImage
-	def undistortImage(self,multi):
-		if self.xmap is None or self.ymap is None: return multi
+	def undistortImage(self, multi):
+		if any(map(lambda m: m is None, [self.xmap, self.ymap])):
+			return multi
 		return [cv2.remap(single, self.xmap, self.ymap, cv2.INTER_LINEAR) for single in multi]
 
 	# alignImage

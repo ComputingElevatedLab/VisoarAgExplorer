@@ -104,15 +104,12 @@ class ImageProviderRedEdge(ImageProvider):
 		multi = capture.reflectance(self.panel_irradiance)
 		multi = [single.astype('float32') for single in multi]
 		multi = self.alignImage(multi, capture_warp_matrices)
-
-		# now that our image is aligned, we can manipulate all the bands together
 		multi = self.mirrorY(multi)
-		multi = self.swapRedAndBlue(multi)
+		multi[0], multi[2] = multi[2], multi[0]
 		multi = self.undistortImage(multi)
 
 		if len(multi) >= 5:
 			shape = (multi[0].shape[1], multi[0].shape[0])
-			for i in range(5, len(multi)):
-				multi[i] = cv2.resize(multi[i], shape)
+			multi[4:] = [cv2.resize(single, shape) for single in multi[4:]]
 
 		return multi

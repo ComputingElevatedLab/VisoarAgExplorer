@@ -169,8 +169,8 @@ class MultiSensorAlignment:
 		
 		if capture_warp_matrices is None:
 			return [
-					self.warpPerspective(multi[C], C)
-					for C in range(len(multi))
+				self.warpPerspective(single, i)
+				for i, single in enumerate(multi)
 			]
 		else:
 			# if capture_warp_matrices exist, this is a micasense imagee
@@ -179,7 +179,7 @@ class MultiSensorAlignment:
 			# capture_warp_matrices[0],capture_warp_matrices[2]=capture_warp_matrices[2],capture_warp_matrices[0]
 
 			return [
-					self.warpPerspective(multi[C], C, capture_warp_matrices) 
-					for C in range(len(multi))
+					self.warpPerspective(single, i, capture_warp_matrices)
+					for i, single in enumerate(multi)
 			]
 
