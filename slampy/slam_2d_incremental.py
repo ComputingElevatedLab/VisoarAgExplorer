@@ -8,6 +8,7 @@ import time
 
 import cv2
 import numpy as np
+
 from rtree import index as rtindex
 
 import OpenVisus as Visus
@@ -71,7 +72,6 @@ class Slam2DIncremental(Visus.Slam):
         self.previous_yaw = 0
         self.reader = MetadataReader()
         self.idx_centers = rtindex.Index()
-        self.idx_boxes = rtindex.Index()
         self.coordinates = {}
         self.align_pbox = None
         self.align_lbox = None
@@ -535,10 +535,6 @@ class Slam2DIncremental(Visus.Slam):
         center = self.world_centers[camera.id]
         self.idx_centers.insert(camera.id, (center[0], center[1]))
 
-    def insert_camera_box_into_spatial_index(self, camera):
-        box = camera.quad.getBoundingBox()
-        self.idx_boxes.insert(camera.id, [box.p1[0], box.p1[1], box.p2[0], box.p2[1]])
-
     def select_and_match_indices(self, start_indices, method=0):
         if method == 0:
             # Get nearest neighbors of index set, and only match the combined sets
@@ -574,29 +570,6 @@ class Slam2DIncremental(Visus.Slam):
     def set_all_unfixed(self):
         for camera in self.cameras:
             camera.bFixed = False
-
-    def get_intersecting_indices(self, start_indices):
-        indices = set()
-        for index in start_indices:
-            camera = self.cameras[index]
-            box = camera.quad.getBoundingBox()
-            camera.bFixed = False
-            indices.update(
-                self.idx_boxes.intersection(
-                    list([box.p1[0], box.p1[1], box.p2[0], box.p2[1]])
-                )
-            )
-
-        indices = list(indices)
-
-        for i, other_camera in enumerate(self.cameras):
-            if i in indices:
-                other_camera.color = camera.color
-                other_camera.bFixed = False
-            else:
-                other_camera.bFixed = True
-
-        return indices
 
     def get_bounding_box_indices(self, start_indices):
         box = Visus.BoxNd.invalid()
