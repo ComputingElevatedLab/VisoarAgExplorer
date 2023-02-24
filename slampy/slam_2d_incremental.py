@@ -118,12 +118,12 @@ class Slam2DIncremental(Visus.Slam):
         self.provider.extractor_method = extractor
 
         self.min_key_points = 1000
-        self.max_key_points = 6000
-        self.anms = 2000
-        self.max_reprojection_error = 0.01
+        self.max_key_points = 3000
+        self.anms = 600
+        self.max_reprojection_error = 3
         self.ratio_check = 0.8
         self.calibration.bFixed = False
-        self.ba_tolerance = 0.005
+        self.ba_tolerance = 0.01
         self.extractor = ExtractKeyPoints(
             self.min_key_points, self.max_key_points, self.anms, extractor, timing=True
         )
@@ -541,48 +541,39 @@ class Slam2DIncremental(Visus.Slam):
 
     def select_and_match_indices(self, start_indices, method=0):
         if method == 0:
-            # rtree select closest N
-            # Total elapsed time: 634.3631505966187
+            # Get nearest neighbors of index set, and only match the combined sets
+            # Total elapsed time: 45.46774768829346 s
             logging.info(f"Getting intersecting indices on {start_indices}")
             indices = self.get_nearest_n_indices(start_indices, 9)
-            # indices = self.get_bounding_box_indices(start_indices)
             logging.info(f"Number of images being bundle adjusted: {len(indices)}")
             self.find_matches_among_indices(indices)
         elif method == 1:
-            # Match all to all but set only some as bFixed
-            # Total elapsed time: 644.3396918773651 s
-            camera_i = self.cameras[-1]
-            for camera_j in self.cameras:
-                if camera_i == camera_j:
-                    continue
-                self.find_matches(camera_i, camera_j)
+            # Get intersecting images of index set, and only match the combined sets
+            # Total elapsed time: 46.673131704330444 s
             logging.info(f"Getting intersecting indices on {start_indices}")
-            self.get_nearest_n_indices(start_indices, 9)
-        elif method == 2:
-            # Match all to all but set only some as bFixed
-            # Total elapsed time: 720.8694500923157 s
-            camera_i = self.cameras[-1]
-            for camera_j in self.cameras:
-                if camera_i == camera_j:
-                    continue
-                self.find_matches(camera_i, camera_j)
-            logging.info(f"Getting intersecting indices on {start_indices}")
-            self.get_intersecting_indices(start_indices)
-        elif method == 3:
-            # Always match all to all (full global badj)
-            # Total elapsed time: 836.8993334770203 s
-            camera_i = self.cameras[-1]
-            for camera_j in self.cameras:
-                if camera_i == camera_j:
-                    continue
-                self.find_matches(camera_i, camera_j)
-        elif method == 4:
-            # rtree select intersecting
-            # Total elapsed time: 2349.37468457222
-            logging.info(f"Getting intersecting indices on {start_indices}")
-            indices = self.get_intersecting_indices(start_indices)
+            indices = self.get_bounding_box_indices(start_indices)
             logging.info(f"Number of images being bundle adjusted: {len(indices)}")
             self.find_matches_among_indices(indices)
+        elif method == 2:
+            # Match all to all, get nearest neighbors of index set, and set the combined set as unfixed
+            # Total elapsed time: 44.78931784629822 s
+            self.find_all_matches()
+            logging.info(f"Getting intersecting indices on {start_indices}")
+            self.get_nearest_n_indices(start_indices, 9)
+        elif method == 3:
+            # Match all to all, get intersecting images of index set, and set the combined set as unfixed
+            # Total elapsed time: 43.65841770172119 s
+            self.find_all_matches()
+            logging.info(f"Getting intersecting indices on {start_indices}")
+            self.get_bounding_box_indices(start_indices)
+        elif method == 4:
+            # Match all to all and leave all images as unfixed (full global badj)
+            # Total elapsed time: 40.36946702003479 s
+            self.find_all_matches()
+
+    def set_all_unfixed(self):
+        for camera in self.cameras:
+            camera.bFixed = False
 
     def get_intersecting_indices(self, start_indices):
         indices = set()
@@ -721,6 +712,7 @@ class Slam2DIncremental(Visus.Slam):
     def bundle_adjust(self, algorithm=""):
         start_time = time.time()
         self.bundleAdjustment(self.ba_tolerance, algorithm)
+        self.removeOutlierMatches(self.max_reprojection_error)
         return time.time() - start_time
 
     def create_visus_midx(self, suffix=""):
