@@ -315,7 +315,11 @@ class Image(object):
         of a three-tuple, the other parts of which are also used by the radiance method.
         '''
         # get vignette center
-        vignette_center_x, vignette_center_y = self.vignette_center
+        if self.meta.camera_model() == "Altum-PT":
+            vignette_center_x = int(self.raw().shape[1] / 2)
+            vignette_center_y = int(self.raw().shape[0] / 2)
+        else:
+            vignette_center_x, vignette_center_y = self.vignette_center
 
         # get a copy of the vignette polynomial because we want to modify it here
         v_poly_list = list(self.vignette_polynomial)
