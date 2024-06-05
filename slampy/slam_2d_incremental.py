@@ -360,7 +360,8 @@ class Slam2DIncremental(Visus.Slam):
 
         if absolute and relative:
             return float(image.metadata[absolute]) - float(image.metadata[relative])
-
+        
+        logging.info(f"Altitude value returned from guess_plane is {float(image.metadata[absolute]) - float(image.metadata[relative])}")
         return 0
 
     def adjust_image_yaw(self, image):
